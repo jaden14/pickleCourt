@@ -31,6 +31,7 @@ use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Storage;
 
 class PaymentResource extends Resource
@@ -103,10 +104,30 @@ class PaymentResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('reservations.court'))
             ->columns([
                 TextColumn::make('created_at')->label('Submitted')->dateTime()->sortable(),
                 TextColumn::make('customer_name')->label('Customer')->searchable(),
                 TextColumn::make('paymentMethod.name')->label('Method'),
+                TextColumn::make('booked_items')
+                    ->label('Booked item')
+                    ->state(fn (Payment $record): string => $record->reservations
+                        ->pluck('court.name')
+                        ->filter()
+                        ->unique()
+                        ->join(', '))
+                    ->placeholder('—')
+                    ->wrap(),
+                TextColumn::make('booking_dates')
+                    ->label('Booking date')
+                    ->state(fn (Payment $record): string => $record->reservations
+                        ->pluck('date')
+                        ->filter()
+                        ->map(fn ($date): string => CarbonImmutable::parse($date)->format('M j, Y'))
+                        ->unique()
+                        ->join(', '))
+                    ->placeholder('—')
+                    ->wrap(),
                 TextColumn::make('reservations_count')->counts('reservations')->label('Hours'),
                 TextColumn::make('total_amount')->label('Total')->money('PHP')->sortable(),
                 TextColumn::make('status')

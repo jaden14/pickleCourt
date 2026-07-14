@@ -2,11 +2,13 @@
 
 namespace App\Filament\Resources\Users;
 
+use App\Filament\Resources\Reservations\ReservationResource;
 use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Filament\Resources\Users\Pages\EditUser;
 use App\Filament\Resources\Users\Pages\ListUsers;
 use App\Models\User;
 use BackedEnum;
+use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\Select;
@@ -17,6 +19,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use UnitEnum;
 
@@ -115,6 +118,28 @@ class UserResource extends Resource
             ])
             ->defaultSort('created_at', 'desc')
             ->recordActions([
+                Action::make('impersonate')
+                    ->label('Impersonate')
+                    ->icon(Heroicon::OutlinedUserCircle)
+                    ->color('warning')
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (User $record): string => 'Impersonate '.$record->name.'?')
+                    ->modalDescription('You will temporarily use this account and can return to your administrator account from the banner at the top of the page.')
+                    ->modalSubmitActionLabel('Start impersonating')
+                    ->visible(fn (User $record): bool => auth()->user()?->role === 'admin'
+                        && ! $record->is(auth()->user())
+                        && ! session()->has('impersonator_id'))
+                    ->action(function (User $record): void {
+                        session()->put('impersonator_id', auth()->id());
+                        Auth::login($record);
+                        session()->regenerate();
+                        session()->put(
+                            'password_hash_'.config('auth.defaults.guard'),
+                            $record->getAuthPassword(),
+                        );
+
+                        redirect()->to(ReservationResource::getUrl('index'));
+                    }),
                 EditAction::make(),
                 DeleteAction::make()
                     ->visible(fn (User $record): bool => ! $record->is(auth()->user())),

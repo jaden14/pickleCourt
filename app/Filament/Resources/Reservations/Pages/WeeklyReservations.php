@@ -93,19 +93,23 @@ class WeeklyReservations extends Page
             ->whereTime('time_slot', $timeSlot)
             ->exists();
 
-        $isDisabled = CourtUnavailability::query()
+        $disabledOverride = CourtUnavailability::query()
             ->where(fn ($query) => $query
                 ->whereNull('court_id')
                 ->orWhere('court_id', $court->getKey()))
             ->whereDate('date', $date)
             ->whereTime('time_slot', $timeSlot)
             ->where('action', 'disable')
-            ->exists();
+            ->first(['reason']);
+
+        $isDisabled = $disabledOverride !== null;
 
         if ($isBooked || $isDisabled) {
             Notification::make()
                 ->danger()
-                ->title($isDisabled ? 'This hour has been disabled.' : 'Court is already booked for this time.')
+                ->title($isDisabled
+                    ? 'This hour is unavailable: '.($disabledOverride->reason ?: 'Court closure').'.'
+                    : 'Court is already booked for this time.')
                 ->send();
 
             return;
@@ -250,6 +254,27 @@ class WeeklyReservations extends Page
             ->orderBy('name')
             ->get();
 
+        $fullDayClosures = CourtUnavailability::query()
+            ->whereNull('court_id')
+            ->where('action', 'disable')
+            ->whereBetween('date', [
+                $dates->first()->toDateString(),
+                $dates->last()->toDateString(),
+            ])
+            ->get(['date', 'time_slot', 'reason'])
+            ->groupBy(fn (CourtUnavailability $override): string => $override->date->toDateString())
+            ->mapWithKeys(function ($overrides, string $date): array {
+                $coversWholeDay = $overrides
+                    ->pluck('time_slot')
+                    ->map(fn (string $timeSlot): string => CarbonImmutable::parse($timeSlot)->format('H:i:s'))
+                    ->unique()
+                    ->count() === 24;
+
+                return $coversWholeDay
+                    ? [$date => ($overrides->first()->reason ?: 'Court closure')]
+                    : [];
+            });
+
         $bookedSlots = Reservation::query()
             ->where('status', '!=', 'cancelled')
             ->where(fn ($query) => $query
@@ -268,7 +293,7 @@ class WeeklyReservations extends Page
         $overrides = CourtUnavailability::query()
             ->whereDate('date', $this->selectedDate)
             ->where('action', 'disable')
-            ->get(['court_id', 'date', 'time_slot']);
+            ->get(['court_id', 'date', 'time_slot', 'reason']);
 
         $disabledSlots = collect();
 
@@ -280,13 +305,14 @@ class WeeklyReservations extends Page
                     $courtId,
                     $override->date->toDateString(),
                     CarbonImmutable::parse($override->time_slot)->format('H:i:s'),
-                ), true);
+                ), $override->reason ?: 'Court closure');
             }
         }
 
         return [
             'dates' => $dates,
             'courts' => $courts,
+            'fullDayClosures' => $fullDayClosures,
             'bookedSlots' => $bookedSlots,
             'disabledSlots' => $disabledSlots,
         ];

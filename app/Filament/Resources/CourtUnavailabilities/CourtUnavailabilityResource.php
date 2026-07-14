@@ -9,13 +9,16 @@ use App\Models\Court;
 use App\Models\CourtUnavailability;
 use BackedEnum;
 use Carbon\CarbonImmutable;
+use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
@@ -40,12 +43,19 @@ class CourtUnavailabilityResource extends Resource
     {
         return $schema
             ->components([
+                Toggle::make('whole_day')
+                    ->label('Whole-day maintenance')
+                    ->helperText('Disable every schedule for all courts on the selected date.')
+                    ->live()
+                    ->hiddenOn('edit')
+                    ->default(false),
                 Select::make('court_id')
                     ->label('Court')
                     ->options(fn (): array => ['all' => 'All courts'] + Court::query()->orderBy('name')->pluck('name', 'id')->all())
                     ->searchable()
                     ->preload()
                     ->default('all')
+                    ->hidden(fn (Get $get): bool => (bool) $get('whole_day'))
                     ->afterStateHydrated(fn (Select $component, mixed $state) => $component->state($state ?? 'all'))
                     ->dehydrateStateUsing(fn (mixed $state): mixed => $state === 'all' ? null : $state),
                 DatePicker::make('date')
@@ -57,7 +67,8 @@ class CourtUnavailabilityResource extends Resource
                     ->options(static::hourOptions())
                     ->searchable()
                     ->native(false)
-                    ->required(),
+                    ->hidden(fn (Get $get): bool => (bool) $get('whole_day'))
+                    ->required(fn (Get $get): bool => ! $get('whole_day')),
                 Select::make('action')
                     ->options([
                         'disable' => 'Disable this hour',
@@ -65,10 +76,18 @@ class CourtUnavailabilityResource extends Resource
                     ])
                     ->default('disable')
                     ->native(false)
+                    ->hidden(fn (Get $get): bool => (bool) $get('whole_day'))
+                    ->required(fn (Get $get): bool => ! $get('whole_day')),
+                Select::make('reason')
+                    ->label('Reason')
+                    ->options([
+                        'Maintenance' => 'Maintenance',
+                        'Private event' => 'Private event',
+                        'Tournament' => 'Tournament',
+                        'Weather closure' => 'Weather closure',
+                    ])
+                    ->native(false)
                     ->required(),
-                TextInput::make('reason')
-                    ->placeholder('Maintenance, private event, etc.')
-                    ->maxLength(255),
             ]);
     }
 
@@ -99,6 +118,30 @@ class CourtUnavailabilityResource extends Resource
                 //
             ])
             ->recordActions([
+                Action::make('removeWholeDayMaintenance')
+                    ->label('Remove whole-day maintenance')
+                    ->icon(Heroicon::OutlinedTrash)
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading('Remove whole-day maintenance?')
+                    ->modalDescription(fn (CourtUnavailability $record): string => 'This will reopen all courts for every hour on '.$record->date->format('M j, Y').'.')
+                    ->modalSubmitActionLabel('Yes, reopen this day')
+                    ->visible(fn (CourtUnavailability $record): bool => $record->court_id === null
+                        && $record->action === 'disable'
+                        && static::isWholeDayMaintenance($record->date->toDateString()))
+                    ->action(function (CourtUnavailability $record): void {
+                        CourtUnavailability::query()
+                            ->whereNull('court_id')
+                            ->whereDate('date', $record->date)
+                            ->where('action', 'disable')
+                            ->delete();
+
+                        Notification::make()
+                            ->success()
+                            ->title('Whole-day maintenance removed.')
+                            ->body('All courts have been reopened for '.$record->date->format('M j, Y').'.')
+                            ->send();
+                    }),
                 EditAction::make(),
             ])
             ->toolbarActions([
@@ -141,5 +184,19 @@ class CourtUnavailabilityResource extends Resource
         $start = CarbonImmutable::parse($time);
 
         return $start->format('g:i A').' - '.$start->addHour()->format('g:i A');
+    }
+
+    public static function isWholeDayMaintenance(string $date): bool
+    {
+        static $wholeDayMaintenance = [];
+
+        return $wholeDayMaintenance[$date] ??= CourtUnavailability::query()
+            ->whereNull('court_id')
+            ->whereDate('date', $date)
+            ->where('action', 'disable')
+            ->pluck('time_slot')
+            ->map(fn (string $timeSlot): string => CarbonImmutable::parse($timeSlot)->format('H:i:s'))
+            ->unique()
+            ->count() === 24;
     }
 }

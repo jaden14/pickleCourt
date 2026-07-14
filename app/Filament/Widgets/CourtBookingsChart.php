@@ -8,9 +8,11 @@ use Filament\Widgets\ChartWidget;
 
 class CourtBookingsChart extends ChartWidget
 {
-    protected ?string $heading = 'Court Bookings This Week';
+    protected ?string $heading = 'Total Bookings per Day';
 
-    protected ?string $description = 'Total reservations from Monday through Sunday.';
+    protected ?string $description = 'Confirmed court bookings during the last seven days.';
+
+    protected static ?int $sort = 2;
 
     protected int|string|array $columnSpan = 'full';
 
@@ -23,9 +25,9 @@ class CourtBookingsChart extends ChartWidget
 
     protected function getData(): array
     {
-        $startOfWeek = CarbonImmutable::now()->startOfWeek();
+        $firstDay = CarbonImmutable::today()->subDays(6);
         $days = collect(range(0, 6))
-            ->map(fn (int $offset): CarbonImmutable => $startOfWeek->addDays($offset));
+            ->map(fn (int $offset): CarbonImmutable => $firstDay->addDays($offset));
 
         $bookingsByDate = Reservation::query()
             ->whereIn('status', ['paid', 'occupied', 'completed', 'no_show'])
@@ -40,7 +42,7 @@ class CourtBookingsChart extends ChartWidget
         return [
             'datasets' => [
                 [
-                    'label' => 'Reservations',
+                    'label' => 'Total bookings',
                     'data' => $days
                         ->map(fn (CarbonImmutable $day): int => (int) ($bookingsByDate[$day->toDateString()] ?? 0))
                         ->all(),

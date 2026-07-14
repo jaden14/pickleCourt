@@ -22,6 +22,8 @@
         .booking-day-name { display: block; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
         .booking-day-number { display: block; margin-top: .12rem; font-size: 1.05rem; font-weight: 800; }
         .booking-day-month { display: block; font-size: .7rem; opacity: .8; }
+        .booking-day-maintenance { display: inline-block; margin-top: .25rem; padding: .12rem .35rem; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: .58rem; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
+        .booking-day.is-selected .booking-day-maintenance { background: #7f1d1d; color: #fee2e2; }
         .booking-selected-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
         .booking-selected-heading h2 { color: rgb(17 24 39); font-size: 1.05rem; font-weight: 700; }
         .dark .booking-selected-heading h2 { color: white; }
@@ -96,16 +98,27 @@
                 </button>
 
                 @foreach ($dates as $date)
+                    @php
+                        $fullDayReason = $fullDayClosures->get($date->toDateString());
+                        $isFullDayClosure = filled($fullDayReason);
+                    @endphp
                     <button
                         type="button"
                         wire:key="day-{{ $date->toDateString() }}"
                         wire:click="selectDate('{{ $date->toDateString() }}')"
                         @if ($date->toDateString() === $selectedDate) aria-current="date" @endif
-                        @class(['booking-day', 'is-selected' => $date->toDateString() === $selectedDate])
+                        @class([
+                            'booking-day',
+                            'is-selected' => $date->toDateString() === $selectedDate,
+                            'is-maintenance' => $isFullDayClosure,
+                        ])
                     >
                         <span class="booking-day-name">{{ $date->format('D') }}</span>
                         <span class="booking-day-number">{{ $date->format('j') }}</span>
                         <span class="booking-day-month">{{ $date->format('M') }}</span>
+                        @if ($isFullDayClosure)
+                            <span class="booking-day-maintenance">{{ $fullDayReason }}</span>
+                        @endif
                     </button>
                 @endforeach
 
@@ -151,10 +164,22 @@
                                         $isNoShow = $reservationStatus === 'no_show';
                                         $hasReservationStatus = filled($reservationStatus);
                                         $isReserved = $isBooked || $isPaymentPending || $isOccupied;
-                                        $isDisabled = $disabledSlots->has($slotKey);
+                                        $closureReason = $disabledSlots->get($slotKey);
+                                        $isDisabled = filled($closureReason);
                                         $isPast = $this->isPastSlot($selectedDate, $timeSlot);
                                         $hourlyRate = $court->hourlyRateFor($timeSlot);
                                         $isSelected = isset($selectedBookings[$slotKey]);
+                                        $slotLabel = match (true) {
+                                            $isBooked => 'Booked',
+                                            $isPaymentPending => 'Processing Payment',
+                                            $isOccupied => 'Occupied',
+                                            $isCompleted => 'Completed',
+                                            $isNoShow => 'No Show',
+                                            $isDisabled => $closureReason,
+                                            $isPast => 'Unavailable',
+                                            $isSelected => 'Selected',
+                                            default => 'Book · ₱'.number_format((float) $hourlyRate, 0),
+                                        };
                                     @endphp
 
                                     <div wire:key="slot-{{ $slotKey }}" class="booking-slot">
@@ -176,7 +201,7 @@
                                                 'is-selected' => $isSelected,
                                             ])
                                         >
-                                            {{ $isBooked ? 'Booked' : ($isPaymentPending ? 'Processing Payment' : ($isOccupied ? 'Occupied' : ($isCompleted ? 'Completed' : ($isNoShow ? 'No Show' : ($isDisabled ? 'Disabled' : ($isPast ? 'Unavailable' : ($isSelected ? 'Selected' : 'Book · ₱'.number_format((float) $hourlyRate, 0)))))))) }}
+                                            {{ $slotLabel }}
                                         </button>
                                     </div>
                                 @empty

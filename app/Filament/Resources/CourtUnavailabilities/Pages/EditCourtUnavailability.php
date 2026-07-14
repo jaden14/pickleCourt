@@ -10,6 +10,13 @@ class EditCourtUnavailability extends EditRecord
 {
     protected static string $resource = CourtUnavailabilityResource::class;
 
+    protected function mutateFormDataBeforeSave(array $data): array
+    {
+        unset($data['whole_day']);
+
+        return $data;
+    }
+
     protected function getHeaderActions(): array
     {
         return [
