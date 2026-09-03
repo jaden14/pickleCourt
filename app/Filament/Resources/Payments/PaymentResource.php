@@ -61,7 +61,15 @@ class PaymentResource extends Resource
                 ImageEntry::make('proof_image')
                     ->label('Proof of payment')
                     ->disk('public')
-                    ->height(400)
+                    ->imageHeight(240)
+                    ->imageWidth(420)
+                    ->extraImgAttributes([
+                        'class' => 'rounded-lg border border-gray-200 object-contain dark:border-gray-700',
+                    ])
+                    ->url(fn (Payment $record): ?string => $record->proof_image
+                        ? Storage::disk('public')->url($record->proof_image)
+                        : null)
+                    ->openUrlInNewTab()
                     ->placeholder('No proof image supplied')
                     ->columnSpanFull(),
                 RepeatableEntry::make('reservations')

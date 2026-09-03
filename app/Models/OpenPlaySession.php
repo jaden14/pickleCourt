@@ -12,7 +12,7 @@ class OpenPlaySession extends Model
 
     protected function casts(): array
     {
-        return ['points_on' => 'boolean', 'timer' => 'boolean', 'started_at' => 'datetime', 'ended_at' => 'datetime'];
+        return ['event_date' => 'date', 'team_names' => 'array', 'points_on' => 'boolean', 'timer' => 'boolean', 'started_at' => 'datetime', 'ended_at' => 'datetime'];
     }
 
     public function user(): BelongsTo

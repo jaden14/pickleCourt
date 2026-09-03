@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="110" fill="#1673d1"/>
+  <circle cx="256" cy="256" r="148" fill="#f9a81a"/>
+  <path d="M168 190c48-42 128-42 176 0M168 322c48 42 128 42 176 0" fill="none" stroke="#a96708" stroke-linecap="round" stroke-width="23" stroke-dasharray="8 21"/>
+  <text x="256" y="278" fill="#fff" font-family="Arial,sans-serif" font-size="112" font-weight="700" text-anchor="middle">PB</text>
+</svg>

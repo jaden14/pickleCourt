@@ -19,7 +19,11 @@ class OpenPlayHistoryService
                 ['user_id' => $user->id, 'session_key' => $key],
                 [
                     'name' => (string) ($data['name'] ?? 'Open Play'),
-                    'mode' => in_array($data['mode'] ?? null, ['balanced', 'winners'], true) ? $data['mode'] : 'balanced',
+                    'mode' => in_array($data['mode'] ?? null, ['balanced', 'winners', 'team'], true) ? $data['mode'] : 'balanced',
+                    'event_date' => $this->eventDate($data['eventDate'] ?? null),
+                    'team_count' => ($data['mode'] ?? null) === 'team' ? $this->teamCount($data['teamCount'] ?? null) : null,
+                    'team_names' => ($data['mode'] ?? null) === 'team' ? $this->teamNames($data['teamNames'] ?? [], $data['teamCount'] ?? null) : null,
+                    'games_per_player' => $this->gamesPerPlayer($data['gamesPerPlayer'] ?? null),
                     'courts' => max(1, (int) ($data['courts'] ?? count($data['matches'] ?? []) ?: 1)),
                     'points' => isset($data['points']) ? (int) $data['points'] : null,
                     'points_on' => (bool) ($data['pointsOn'] ?? true),
@@ -43,6 +47,7 @@ class OpenPlayHistoryService
                         'games_played' => max($existing->games_played, (int) ($playerData['gamesPlayed'] ?? 0)),
                         'wins' => max($existing->wins, (int) ($playerData['wins'] ?? 0)),
                         'losses' => max($existing->losses, (int) ($playerData['losses'] ?? 0)),
+                        'team_index' => isset($playerData['teamIndex']) && is_numeric($playerData['teamIndex']) ? max(0, (int) $playerData['teamIndex']) : null,
                     ]);
 
                     continue;
@@ -57,6 +62,7 @@ class OpenPlayHistoryService
                     'wins' => (int) ($playerData['wins'] ?? 0),
                     'losses' => (int) ($playerData['losses'] ?? 0),
                     'partner_key' => $playerData['partnerId'] ?? null,
+                    'team_index' => isset($playerData['teamIndex']) && is_numeric($playerData['teamIndex']) ? max(0, (int) $playerData['teamIndex']) : null,
                     'queued_at' => $playerData['queuedAt'] ?? null,
                 ]);
                 $playersByName[$nameKey] = $player;
@@ -133,6 +139,10 @@ class OpenPlayHistoryService
             'id' => $session->session_key,
             'name' => $session->name,
             'mode' => $session->mode,
+            'eventDate' => $session->event_date?->toDateString(),
+            'teamCount' => $session->team_count,
+            'teamNames' => $session->team_names ?? [],
+            'gamesPerPlayer' => $session->games_per_player,
             'courts' => $session->courts,
             'points' => $session->points,
             'pointsOn' => $session->points_on,
@@ -150,6 +160,7 @@ class OpenPlayHistoryService
                 'wins' => $player->wins,
                 'losses' => $player->losses,
                 'partnerId' => $player->partner_key,
+                'teamIndex' => $player->team_index,
                 'queuedAt' => $player->queued_at?->toISOString(),
             ])->values()->all(),
             'completedMatches' => $session->matches->map(function ($match): array {
@@ -168,5 +179,42 @@ class OpenPlayHistoryService
                 ];
             })->values()->all(),
         ];
+    }
+
+    private function eventDate(mixed $value): ?string
+    {
+        if (! is_string($value) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return null;
+        }
+
+        return $value;
+    }
+
+    private function teamCount(mixed $value): ?int
+    {
+        $count = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 2, 'max_range' => 64]]);
+
+        return $count === false ? null : $count;
+    }
+
+    private function teamNames(mixed $value, mixed $teamCount): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $count = $this->teamCount($teamCount) ?? 0;
+
+        return array_map(
+            fn ($name) => mb_substr(trim((string) $name), 0, 40),
+            array_slice($value, 0, $count),
+        );
+    }
+
+    private function gamesPerPlayer(mixed $value): int
+    {
+        $games = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 20]]);
+
+        return $games === false ? 4 : $games;
     }
 }
