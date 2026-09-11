@@ -528,7 +528,7 @@
             </div>
             <div class="players" id="player-list"></div>
             <div class="team-rosters" id="team-rosters" hidden></div>
-            <datalist id="team-color-options"><option value="#e05252" label="Red"></option><option value="#ef8a32" label="Orange"></option><option value="#47a86e" label="Green"></option><option value="#8a6348" label="Brown"></option><option value="#3c82d0" label="Blue"></option><option value="#8564c6" label="Purple"></option><option value="#d66f9e" label="Pink"></option><option value="#319d9d" label="Teal"></option></datalist>
+            <datalist id="team-color-options"><option value="#e05252" label="Red"></option><option value="#ef8a32" label="Orange"></option><option value="#f3c614" label="Yellow"></option><option value="#47a86e" label="Green"></option><option value="#8a6348" label="Brown"></option><option value="#3c82d0" label="Blue"></option><option value="#8564c6" label="Purple"></option><option value="#d66f9e" label="Pink"></option><option value="#319d9d" label="Teal"></option></datalist>
         </div>
         <div class="sticky-action"><button class="main-button" id="start-session" type="button" disabled>Need 4 more ready</button></div>
     </section>
@@ -721,7 +721,7 @@
     const isAvailable = player => playerStatus(player)==='ready';
     const canPlayAnotherGame = (player, session=state.current) => isAvailable(player) && (player.gamesPlayed||0) < (session?.gamesPerPlayer||initial.setup.gamesPerPlayer);
     const playerInitials = player => player.name.trim().split(/\s+/).slice(0,2).map(part=>part[0]).join('').toUpperCase();
-    const teamPalette=[['Red Team','#e05252'],['Orange Team','#ef8a32'],['Green Team','#47a86e'],['Brown Team','#8a6348'],['Blue Team','#3c82d0'],['Purple Team','#8564c6'],['Pink Team','#d66f9e'],['Teal Team','#319d9d']];
+    const teamPalette=[['Red Team','#e05252'],['Orange Team','#ef8a32'],['Yellow Team','#f3c614'],['Green Team','#47a86e'],['Brown Team','#8a6348'],['Blue Team','#3c82d0'],['Purple Team','#8564c6'],['Pink Team','#d66f9e'],['Teal Team','#319d9d']];
     function teamName(index){return String(state.setup.teamNames[index]||teamPalette[index]?.[0]||`Team ${index+1}`).trim()||`Team ${index+1}`;}
     function teamColor(index){return state.setup.teamColors[index]||teamPalette[index]?.[1]||'#1673d1';}
     function playerTeamColor(player,session=state.current){const source=session?.mode==='team'?session:state.setup,color=source?.teamColors?.[player?.teamIndex]||teamPalette[player?.teamIndex]?.[1];return source?.mode==='team'&&Number.isInteger(player?.teamIndex)&&/^#[0-9a-f]{6}$/i.test(color||'')?color:null;}
