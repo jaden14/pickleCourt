@@ -9,6 +9,7 @@ use App\Services\OpenPlayHistoryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 
 class OpenPlayController extends Controller
@@ -88,6 +89,29 @@ class OpenPlayController extends Controller
         $session = $historyService->archive($request->user(), $validated['session']);
 
         return response()->json(['saved' => true, 'session_key' => $session->session_key]);
+    }
+
+    public function uploadTeamLogo(Request $request): JsonResponse
+    {
+        abort_unless($request->user()->canUseOpenPlay(), 403);
+
+        $validated = $request->validate([
+            'logo' => ['required', 'image', 'max:2048'],
+            'previous_path' => ['nullable', 'string'],
+        ]);
+
+        $directory = 'open-play/team-logos/'.$request->user()->id;
+        $path = $validated['logo']->store($directory, 'public');
+        $previousPath = $validated['previous_path'] ?? null;
+
+        if ($previousPath && str_starts_with($previousPath, $directory.'/')) {
+            Storage::disk('public')->delete($previousPath);
+        }
+
+        return response()->json([
+            'path' => $path,
+            'url' => Storage::disk('public')->url($path),
+        ]);
     }
 
     public function clearData(Request $request): JsonResponse
