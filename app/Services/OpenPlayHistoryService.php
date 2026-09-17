@@ -23,6 +23,7 @@ class OpenPlayHistoryService
                     'event_date' => $this->eventDate($data['eventDate'] ?? null),
                     'team_count' => ($data['mode'] ?? null) === 'team' ? $this->teamCount($data['teamCount'] ?? null) : null,
                     'team_names' => ($data['mode'] ?? null) === 'team' ? $this->teamNames($data['teamNames'] ?? [], $data['teamCount'] ?? null) : null,
+                    'session_data' => $data,
                     'games_per_player' => $this->gamesPerPlayer($data['gamesPerPlayer'] ?? null),
                     'courts' => max(1, (int) ($data['courts'] ?? count($data['matches'] ?? []) ?: 1)),
                     'points' => isset($data['points']) ? (int) $data['points'] : null,
@@ -135,7 +136,7 @@ class OpenPlayHistoryService
 
     private function toFrontend(OpenPlaySession $session): array
     {
-        return [
+        return array_replace($session->session_data ?? [], [
             'id' => $session->session_key,
             'name' => $session->name,
             'mode' => $session->mode,
@@ -178,7 +179,7 @@ class OpenPlayHistoryService
                     'completedAt' => $match->completed_at?->toISOString(),
                 ];
             })->values()->all(),
-        ];
+        ]);
     }
 
     private function eventDate(mixed $value): ?string

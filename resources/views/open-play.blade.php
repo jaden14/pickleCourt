@@ -191,7 +191,7 @@
         .add-court:disabled { border-color:#d7dce4; color:#9ca6b5; cursor:not-allowed; background:transparent; }
         .up-next { margin-top:1.1rem; }
         .up-next-head { display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.55rem; }
-        .up-next-head h3 { margin:0; color:#566174; font-size:.68rem; font-weight:850; letter-spacing:.14em; text-transform:uppercase; }
+        .up-next-head h3 { margin:0 auto 0 0; color:#566174; font-size:.68rem; font-weight:850; letter-spacing:.14em; text-transform:uppercase; }
         .up-next-add { padding:.48rem .65rem; border:0; border-radius:8px; background:#eaf3ff; color:var(--blue); cursor:pointer; font-size:.7rem; font-weight:750; }
         .up-next-add:disabled { background:#edf0f4; color:#9aa5b4; cursor:not-allowed; }
         .up-next-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.7rem; }
@@ -359,7 +359,7 @@
         .picker-player { display:grid; grid-template-columns:32px minmax(0,1fr) auto; align-items:center; gap:.65rem; width:100%; min-height:53px; padding:.5rem 1.15rem; border:0; border-bottom:1px solid #e7eaf0; background:#fff; cursor:pointer; text-align:left; }
         .picker-player:disabled { cursor:not-allowed; opacity:.5; }
         .picker-player .waiting-avatar { width:29px; height:29px; }
-        .picker-player strong { display:block; overflow:hidden; font-size:.78rem; text-overflow:ellipsis; white-space:nowrap; }
+        .picker-player strong { display:block; overflow:hidden; color:#18202b; font-size:.84rem; text-overflow:ellipsis; white-space:nowrap; }
         .picker-player small { color:var(--muted); font-size:.64rem; }
         .picker-wait { color:#687487; font-size:.7rem; }
         .picker-cancel-wrap { position:sticky; bottom:0; padding:.55rem 1.15rem calc(.8rem + env(safe-area-inset-bottom)); background:#fff; }
@@ -449,6 +449,10 @@
         html[data-theme="dark"] .theme-toggle,html[data-theme="dark"] .session-card,html[data-theme="dark"] .form-card,html[data-theme="dark"] .match-card,html[data-theme="dark"] .player,html[data-theme="dark"] .field,html[data-theme="dark"] .option,html[data-theme="dark"] .circle-button,html[data-theme="dark"] .pill,html[data-theme="dark"] .session-toolbar button,html[data-theme="dark"] .waiting-list,html[data-theme="dark"] button.waiting-player,html[data-theme="dark"] .match-history-card,html[data-theme="dark"] .queue-stats,html[data-theme="dark"] .summary-metric,html[data-theme="dark"] .summary-table,html[data-theme="dark"] .score-team { background:#182231; color:var(--ink); }
         html[data-theme="dark"] .sticky-action,html[data-theme="dark"] .bottom-nav,html[data-theme="dark"] .summary-done-wrap { border-color:#374151; background:rgb(17 24 39 / .94); }
         html[data-theme="dark"] .rating-guide-sheet,html[data-theme="dark"] .rating-guide-actions,html[data-theme="dark"] .player-picker-sheet,html[data-theme="dark"] .player-picker-head,html[data-theme="dark"] .picker-cancel-wrap,html[data-theme="dark"] .player-action-panel,html[data-theme="dark"] .player-action-head,html[data-theme="dark"] .player-action,html[data-theme="dark"] .standings-panel,html[data-theme="dark"] .standings-head,html[data-theme="dark"] .standings-actions,html[data-theme="dark"] .end-dialog.selector .end-dialog-panel,html[data-theme="dark"] .winner-options button { background:#182231; color:var(--ink); border-color:#374151; }
+        html[data-theme="dark"] .picker-player { border-color:#374151; background:#182231; color:#f8fafc; }
+        html[data-theme="dark"] .picker-player:hover { background:#202c3c; }
+        html[data-theme="dark"] .picker-player strong { color:#f8fafc; }
+        html[data-theme="dark"] .picker-player small,html[data-theme="dark"] .picker-wait { color:#b8c5d8; }
         html[data-theme="dark"] .waiting-player,html[data-theme="dark"] .history-match,html[data-theme="dark"] .standing-row,html[data-theme="dark"] .summary-player { border-color:#374151; }
         html[data-theme="dark"] .waiting-player:hover,html[data-theme="dark"] .unavailable-section .waiting-player,html[data-theme="dark"] .summary-table-head,html[data-theme="dark"] .standings-note { background:#202c3c; }
         html[data-theme="dark"] .standing-row.top-1 { background:linear-gradient(90deg,#3c3212,#182231 58%); }
@@ -645,7 +649,9 @@
     };
     const databaseState = {{ Illuminate\Support\Js::from($openPlayState ?? null) }};
     const offlineState = (()=>{try{return JSON.parse(localStorage.getItem('pb-queue-offline-state')||'null');}catch{return null;}})();
-    let state = {...initial,...((navigator.onLine?databaseState:offlineState)||databaseState||offlineState||{})};
+    const savedAt = value => Date.parse(value?._savedAt || '') || 0;
+    const offlineStateIsNewer = savedAt(offlineState)>savedAt(databaseState);
+    let state = {...initial,...(offlineStateIsNewer?offlineState:(databaseState||offlineState||{}))};
     state.setup = { ...initial.setup, ...(state.setup || {}) };
     state.setup.name = typeof state.setup.name === 'string' ? state.setup.name : '';
     state.setup.eventDate = /^\d{4}-\d{2}-\d{2}$/.test(state.setup.eventDate || '') ? state.setup.eventDate : '';
@@ -671,8 +677,11 @@
     let saveTimer;
     const persistOffline = persistedState => localStorage.setItem('pb-queue-offline-state',JSON.stringify(persistedState));
     const syncState = persistedState => fetch({{ Illuminate\Support\Js::from(route('open-play.state.save')) }},{method:'PUT',headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':csrfToken},body:JSON.stringify({state:persistedState})}).then(response=>{if(!response.ok)throw new Error('Unable to save Open Play');});
-    const save = () => {clearTimeout(saveTimer);saveTimer=setTimeout(()=>{const persistedState={...state,history:[]};persistOffline(persistedState);if(!navigator.onLine){toast('Saved on this device · will sync when online');return;}syncState(persistedState).catch(()=>toast('Saved on this device · will sync when online'));},250);};
-    window.addEventListener('online',()=>{const persistedState={...state,history:[]};persistOffline(persistedState);syncState(persistedState).then(()=>toast('Open Play synced')).catch(()=>{});});
+    const persistedSnapshot = () => ({...state,history:[],_savedAt:new Date().toISOString()});
+    const save = () => {clearTimeout(saveTimer);saveTimer=setTimeout(()=>{const persistedState=persistedSnapshot();persistOffline(persistedState);if(!navigator.onLine){toast('Saved on this device · will sync when online');return;}syncState(persistedState).catch(()=>toast('Saved on this device · sign in again to sync'));},250);};
+    window.addEventListener('online',()=>{const persistedState=persistedSnapshot();persistOffline(persistedState);syncState(persistedState).then(()=>toast('Open Play synced')).catch(()=>{});});
+    if(offlineStateIsNewer&&navigator.onLine)syncState(offlineState).then(()=>toast('Recovered newer Open Play data')).catch(()=>{});
+    window.setInterval(()=>{if(!navigator.onLine)return;const persistedState=persistedSnapshot();persistOffline(persistedState);syncState(persistedState).catch(()=>{});},60000);
     if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('/pwa-sw.js'));
     const archiveSession = session => fetch({{ Illuminate\Support\Js::from(route('open-play.sessions.archive')) }},{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':csrfToken},body:JSON.stringify({session})}).then(response=>{if(!response.ok)throw new Error('Unable to archive session');return response.json();}).catch(()=>toast('Session history could not be saved'));
     function renderTheme(){const dark=state.theme==='dark';document.documentElement.dataset.theme=state.theme;$('#theme-toggle').textContent=dark?'☀':'☾';$('#theme-toggle').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
@@ -684,7 +693,7 @@
     function show(name) {
         $$('.screen').forEach(x=>x.classList.toggle('active',x.dataset.screen===name));
         state.screen=name; save(); window.scrollTo(0,0);
-        if(name==='home') renderHome(); if(name==='history') renderHistory(); if(name==='active') renderActive(); if(name==='match-detail') renderMatchDetail(); if(name==='session-summary'){renderSessionSummary();renderSummaryPlayerStats();renderSummaryMatchDurations();if(state.summary?.mode==='team')renderTeamSummary();}
+        if(name==='home') renderHome(); if(name==='history') renderHistory(); if(name==='active') renderActive(); if(name==='match-detail') renderMatchDetail(); if(name==='session-summary'){renderSessionSummary();renderSummaryPlayerStats();renderSummaryMatchDurations();if(state.summary?.mode==='team'){renderTeamSummary();renderFourthTeamSummary();}}
     }
     $$('[data-go]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.go)));
     $$('[data-tab]').forEach(b=>b.addEventListener('click',()=>show(b.dataset.tab)));
@@ -796,6 +805,7 @@
     const playerPairKey = (first,second) => [first.id,second.id].sort().join('|');
     const canUseTeamPair = (first,second,session=state.current) => {const key=playerPairKey(first,second);if(!(session?.teammateHistory?.[key]||0))return true;const roster=(session?.players||[]).filter(player=>player.teamIndex===first.teamIndex);return [first,second].every(player=>roster.filter(teammate=>teammate.id!==player.id).every(teammate=>(session?.teammateHistory?.[playerPairKey(player,teammate)]||0)>0));};
     const playersHavePlayedTogether = (first,second,session=state.current) => {const key=playerPairKey(first,second);return Boolean(session?.teammateHistory?.[key]||session?.opponentHistory?.[key]);};
+    const teammatePairCount = (first,second,session=state.current) => first&&second?(session?.teammateHistory?.[playerPairKey(first,second)]||0):0;
     const newOpponentsOnly = (candidates,currentPlayers,session=state.current) => candidates.filter(candidate=>currentPlayers.every(player=>!playersHavePlayedTogether(candidate,player,session)));
     const twoPlayerChoices = players => players.flatMap((first,index)=>players.slice(index+1).map(second=>[first,second]));
     function createTeamPairPlan(players,teamCount,gamesPerPlayer){
@@ -810,6 +820,28 @@
             }
             return pairs;
         });
+    }
+    function rebuildTeamSchedulingHistory(session=state.current){
+        if(session?.mode!=='team')return;
+        const playersByName=new Map((session.players||[]).map(player=>[String(player.name).toLocaleLowerCase(),player]));
+        const teammateHistory={},opponentHistory={},matchupCounts={};
+        let lastPairKeys=[];
+        const resolvePlayers=players=>(players||[]).map(player=>typeof player==='string'?playersByName.get(player.toLocaleLowerCase()):player).filter(Boolean);
+        const recordMatch=(teamA,teamB,teamAIndex,teamBIndex)=>{
+            const left=resolvePlayers(teamA),right=resolvePlayers(teamB);
+            if(left.length!==2||right.length!==2)return;
+            const pairKeys=[playerPairKey(left[0],left[1]),playerPairKey(right[0],right[1])];
+            pairKeys.forEach(key=>teammateHistory[key]=(teammateHistory[key]||0)+1);
+            left.forEach(first=>right.forEach(second=>{const key=playerPairKey(first,second);opponentHistory[key]=(opponentHistory[key]||0)+1;}));
+            if(Number.isInteger(teamAIndex)&&Number.isInteger(teamBIndex)){const key=matchupKey(teamAIndex,teamBIndex);matchupCounts[key]=(matchupCounts[key]||0)+1;}
+            lastPairKeys=pairKeys;
+        };
+        (session.completedMatches||[]).forEach(match=>recordMatch(match.teamA,match.teamB,match.teamAIndex,match.teamBIndex));
+        [...(session.matches||[]),...(session.upNext||[])].forEach(match=>recordMatch(match.teamA,match.teamB,match.teamAIndex,match.teamBIndex));
+        session.teammateHistory=teammateHistory;
+        session.opponentHistory=opponentHistory;
+        session.matchupCounts=matchupCounts;
+        session.lastTeammatePairKeys=lastPairKeys;
     }
     function stageTeamCourtWithHistory(match){
         const s=state.current;
@@ -860,10 +892,132 @@
     const hasGameRemaining = (player,session=state.current) => session?.mode!=='team'||(session.players.find(item=>item.id===player.id)?.gamesPlayed??player.gamesPlayed??0)<session.gamesPerPlayer;
     function addUpNextPlayer(nextId,side){const s=state.current,next=s.upNext.find(item=>item.id===nextId),team=next?.[side];if(!next||!team||team.length>=2)return;const teamIndex=side==='teamA'?next.teamAIndex:next.teamBIndex,available=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&player.teamIndex===teamIndex);if(!available.length){toast('No available player from this team');return;}const currentPlayers=[...next.teamA,...next.teamB],fresh=newOpponentsOnly(available,currentPlayers,s);let choices=fresh.length?fresh:available,showingAll=!fresh.length;const pick=()=>Number(window.prompt(`Add player:\n${choices.map((player,index)=>`${index+1}. ${player.name}`).join('\n')}${!showingAll&&fresh.length<available.length?'\n0. Show all eligible players':''}`));let choice=pick();if(choice===0&&!showingAll){choices=available;showingAll=true;choice=pick();}const player=choices[choice-1];if(!player)return;s.waiting=s.waiting.filter(item=>item.id!==player.id);team.push(player);save();renderActive();}
     function editUpNextPlayer(nextId,playerId){const s=state.current,next=s.upNext.find(item=>item.id===nextId),old=next&&[...next.teamA,...next.teamB].find(p=>p.id===playerId);if(!old)return;const available=s.waiting.filter(p=>(p.status||'ready')==='ready'&&hasGameRemaining(p,s)&&(s.mode!=='team'||p.teamIndex===old.teamIndex));if(!available.length){toast(s.mode==='team'?'No available replacement from this team':'No available replacement player');return;}const currentPlayers=[...next.teamA,...next.teamB].filter(player=>player.id!==old.id),fresh=newOpponentsOnly(available,currentPlayers,s);let choices=fresh.length?fresh:available,showingAll=!fresh.length;const teamName=s.mode==='team'?(s.teamNames?.[old.teamIndex]||teamPalette[old.teamIndex]?.[0]||`Team ${old.teamIndex+1}`):'',pick=()=>Number(window.prompt(`Replace ${old.name}${teamName?` (${teamName})`:''} with:\n${choices.map((p,index)=>`${index+1}. ${p.name}`).join('\n')}${!showingAll&&fresh.length<available.length?'\n0. Show all eligible players':''}`));let choice=pick();if(choice===0&&!showingAll){choices=available;showingAll=true;choice=pick();}const replacement=choices[choice-1];if(!replacement)return;const team=next.teamA.some(p=>p.id===playerId)?next.teamA:next.teamB,index=team.findIndex(p=>p.id===playerId);old.queuedAt=new Date().toISOString();s.waiting=s.waiting.filter(p=>p.id!==replacement.id);s.waiting.push(old);team[index]=replacement;save();renderActive();}
+    // Manual queue changes intentionally show every eligible teammate. Pair history remains
+    // a constraint for automatic matchmaking, while an organizer can make exceptions.
+    function addUpNextPlayer(nextId,side){
+        const s=state.current,next=s.upNext.find(item=>item.id===nextId),team=next?.[side];
+        if(!next||!team||team.length>=2)return;
+        const teamIndex=side==='teamA'?next.teamAIndex:next.teamBIndex;
+        const available=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&(s.mode!=='team'||player.teamIndex===teamIndex));
+        if(!available.length){toast('No available player from this team');return;}
+        const choice=Number(window.prompt(`Add player:\n${available.map((player,index)=>`${index+1}. ${player.name}`).join('\n')}`));
+        const player=available[choice-1];
+        if(!player)return;
+        s.waiting=s.waiting.filter(item=>item.id!==player.id);
+        team.push(player);
+        save();
+        renderActive();
+    }
+    function editUpNextPlayer(nextId,playerId){
+        const s=state.current,next=s.upNext.find(item=>item.id===nextId),old=next&&[...next.teamA,...next.teamB].find(player=>player.id===playerId);
+        if(!old)return;
+        const available=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&(s.mode!=='team'||player.teamIndex===old.teamIndex));
+        if(!available.length){toast(s.mode==='team'?'No available replacement from this team':'No available replacement player');return;}
+        const teamName=s.mode==='team'?(s.teamNames?.[old.teamIndex]||teamPalette[old.teamIndex]?.[0]||`Team ${old.teamIndex+1}`):'';
+        const choice=Number(window.prompt(`Replace ${old.name}${teamName?` (${teamName})`:''} with:\n${available.map((player,index)=>`${index+1}. ${player.name}`).join('\n')}`));
+        const replacement=available[choice-1];
+        if(!replacement)return;
+        const team=next.teamA.some(player=>player.id===playerId)?next.teamA:next.teamB;
+        const index=team.findIndex(player=>player.id===playerId);
+        old.queuedAt=new Date().toISOString();
+        s.waiting=s.waiting.filter(player=>player.id!==replacement.id);
+        s.waiting.push(old);
+        team[index]=replacement;
+        save();
+        renderActive();
+    }
+    function addUpNextPlayer(nextId,side){
+        const s=state.current,next=s.upNext.find(item=>item.id===nextId),team=next?.[side];
+        if(!next||!team||team.length>=2)return;
+        const teamIndex=side==='teamA'?next.teamAIndex:next.teamBIndex;
+        const available=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&(s.mode!=='team'||player.teamIndex===teamIndex));
+        if(!available.length){toast('No available player from this team');return;}
+        const teammate=team[0],choice=Number(window.prompt(`Add player:\n${available.map((player,index)=>`${index+1}. ${player.name}${teammate?` · paired with ${teammate.name}: ${teammatePairCount(player,teammate,s)}x`:''}`).join('\n')}`));
+        const player=available[choice-1];
+        if(!player)return;
+        s.waiting=s.waiting.filter(item=>item.id!==player.id);
+        team.push(player);
+        save();
+        renderActive();
+    }
+    function editUpNextPlayer(nextId,playerId){
+        const s=state.current,next=s.upNext.find(item=>item.id===nextId),old=next&&[...next.teamA,...next.teamB].find(player=>player.id===playerId);
+        if(!old)return;
+        const available=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&(s.mode!=='team'||player.teamIndex===old.teamIndex));
+        if(!available.length){toast(s.mode==='team'?'No available replacement from this team':'No available replacement player');return;}
+        const team=next.teamA.some(player=>player.id===playerId)?next.teamA:next.teamB,teammate=team.find(player=>player.id!==playerId),teamName=s.mode==='team'?(s.teamNames?.[old.teamIndex]||teamPalette[old.teamIndex]?.[0]||`Team ${old.teamIndex+1}`):'';
+        const choice=Number(window.prompt(`Replace ${old.name}${teamName?` (${teamName})`:''} with:\n${available.map((player,index)=>`${index+1}. ${player.name}${teammate?` · paired with ${teammate.name}: ${teammatePairCount(player,teammate,s)}x`:''}`).join('\n')}`));
+        const replacement=available[choice-1];
+        if(!replacement)return;
+        const index=team.findIndex(player=>player.id===playerId);
+        old.queuedAt=new Date().toISOString();
+        s.waiting=s.waiting.filter(player=>player.id!==replacement.id);
+        s.waiting.push(old);
+        team[index]=replacement;
+        save();
+        renderActive();
+    }
+    function autoFillUpNextPlayer(nextId,side){
+        const s=state.current,next=s.upNext.find(item=>item.id===nextId),team=next?.[side];
+        if(!next||!team||team.length>=2)return;
+        const teamIndex=side==='teamA'?next.teamAIndex:next.teamBIndex,teammate=team[0];
+        const eligible=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&player.teamIndex===teamIndex&&!playerAssignment(player,s));
+        const unusedPair=teammate?eligible.filter(player=>teammatePairCount(player,teammate,s)===0):eligible;
+        if(!unusedPair.length){toast(`No available unused teammate pairing remains for ${s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`}.`);return;}
+        const player=longestWaitingFirst(unusedPair,s)[0];
+        s.waiting=s.waiting.filter(item=>item.id!==player.id);
+        team.push(player);
+        save();
+        renderActive();
+    }
+    function showManualTeamMatchPicker(firstTeamIndex=null){
+        const s=state.current;
+        if(!s||s.mode!=='team')return;
+        const teams=Array.from({length:s.teamCount||0},(_,index)=>({index,name:s.teamNames?.[index]||teamPalette[index]?.[0]||`Team ${index+1}`}));
+        const options=teams.filter(team=>team.index!==firstTeamIndex);
+        const heading=firstTeamIndex===null?'Choose the first team':'Choose its opponent';
+        const description=firstTeamIndex===null?'Create a manual Up Next matchup.':'Select the team that will play against it.';
+        playerActionPanel.innerHTML=`<div class="player-action-head"><h3 id="player-action-title">${heading}</h3><p>${description}</p></div>${options.map(team=>`<button class="player-action" data-manual-team="${team.index}" type="button">${escapeHtml(team.name)}</button>`).join('')}<div class="picker-cancel-wrap"><button class="winner-cancel" id="manual-team-cancel" type="button">Cancel</button></div>`;
+        playerActionSheet.hidden=false;
+        $$('[data-manual-team]',playerActionPanel).forEach(button=>button.onclick=()=>{
+            const selected=Number(button.dataset.manualTeam);
+            if(firstTeamIndex===null){showManualTeamMatchPicker(selected);return;}
+            s.upNext.push({id:newId(),teamA:[],teamB:[],teamAIndex:firstTeamIndex,teamBIndex:selected,manual:true});
+            hidePlayerActions();
+            save();
+            renderActive();
+            toast('Manual matchup added to Up Next');
+        });
+        $('#manual-team-cancel').onclick=hidePlayerActions;
+    }
     function playersAtGameLimit(players,session=state.current){return players.filter(player=>(session?.players.find(item=>item.id===player.id)?.gamesPlayed??player.gamesPlayed??0)>=(session?.gamesPerPlayer||Infinity));}
     function sendUpNext(nextId,courtId=null){const s=state.current,next=s.upNext.find(item=>item.id===nextId),court=courtId?s.matches.find(match=>match.id===courtId):s.matches.find(m=>!m.teamA?.length&&!m.manualSlots);if(!next||!court)return;if(next.teamA.length!==2||next.teamB.length!==2){toast('Each next match needs 4 players');return;}const capped=playersAtGameLimit([...next.teamA,...next.teamB],s);if(capped.length){toast(`${capped.map(player=>player.name).join(', ')} ${capped.length===1?'has':'have'} reached the game limit`);return;}court.teamA=next.teamA;court.teamB=next.teamB;court.teamAIndex=next.teamAIndex;court.teamBIndex=next.teamBIndex;court.matchupKey=next.matchupKey;s.upNext=s.upNext.filter(item=>item.id!==nextId);save();renderActive();addUpNext();toast(`Next match sent to Court ${court.court}`);}
     function autoFillManual(match){const empty=match.manualSlots.map((p,i)=>p?null:i).filter(i=>i!==null),available=state.current.waiting.filter(p=>(p.status||'ready')==='ready');if(available.length<empty.length)return;const ordered=state.current.mode==='balanced'?[...available].sort((a,b)=>playerRating(b)-playerRating(a)):shuffled(available);const picked=ordered.slice(0,empty.length),ids=new Set(picked.map(p=>p.id));state.current.waiting=state.current.waiting.filter(p=>!ids.has(p.id));empty.forEach((slot,i)=>match.manualSlots[slot]=picked[i]);finalizeManual(match);}
-    function removeCourt(match){const s=state.current;if(s.matches.length<=1||match.teamA.length)return;if(match.manualSlots)cancelManual(match);(match.nextQueue||[]).forEach(p=>{p.queuedAt=new Date().toISOString();s.waiting.push(p);});s.matches=s.matches.filter(m=>m.id!==match.id);s.matches.forEach((m,i)=>m.court=i+1);s.courts=s.matches.length;state.setup.courts=s.courts;save();renderActive();}
+    function autoFillManual(match){
+        const s=state.current,emptySlots=match.manualSlots.map((player,index)=>player?null:index).filter(index=>index!==null),originalSlots=[...match.manualSlots],originalWaiting=[...s.waiting];
+        if(!emptySlots.length)return;
+        if(s.mode!=='team'){
+            const available=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s));
+            if(available.length<emptySlots.length)return;
+            const picked=(s.mode==='balanced'?longestWaitingFirst(available,s):shuffled(available)).slice(0,emptySlots.length),ids=new Set(picked.map(player=>player.id));
+            s.waiting=s.waiting.filter(player=>!ids.has(player.id));
+            emptySlots.forEach((slot,index)=>match.manualSlots[slot]=picked[index]);
+            finalizeManual(match);
+            return;
+        }
+        for(const slot of emptySlots){
+            const side=slot<2?'teamA':'teamB',sideSlots=side==='teamA'?[0,1]:[2,3],teammate=match.manualSlots[sideSlots.find(index=>index!==slot)],teamIndex=teammate?.teamIndex??match[`${side}Index`];
+            if(!Number.isInteger(teamIndex)){match.manualSlots=originalSlots;s.waiting=originalWaiting;toast('Choose one player from this team before auto-fill.');return;}
+            const eligible=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&player.teamIndex===teamIndex&&!playerAssignment(player,s));
+            const unusedPair=teammate?eligible.filter(player=>teammatePairCount(player,teammate,s)===0):eligible;
+            if(!unusedPair.length){match.manualSlots=originalSlots;s.waiting=originalWaiting;toast(`No unused teammate pairing is available for ${s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`}.`);return;}
+            const player=longestWaitingFirst(unusedPair,s)[0];
+            s.waiting=s.waiting.filter(item=>item.id!==player.id);
+            match.manualSlots[slot]=player;
+        }
+        finalizeManual(match);
+    }
+    function removeCourt(match){const s=state.current;if(s.matches.length<=1||match.teamA.length)return;if(match.manualSlots)cancelManual(match);(match.nextQueue||[]).forEach(p=>{p.queuedAt=new Date().toISOString();s.waiting.push(p);});s.matches=s.matches.filter(m=>m.id!==match.id);s.courts=s.matches.length;state.setup.courts=s.courts;save();renderActive();}
     function addCourt(){const s=state.current;if(!s||s.matches.length>=8)return;s.matches.push({id:newId(),court:s.matches.length+1,teamA:[],teamB:[],started:false,done:false,nextQueue:[],nextQueueEnabled:false});s.courts=s.matches.length;state.setup.courts=s.courts;save();renderActive();toast(`Court ${s.courts} added`);}
     const elapsedMinutes = (startedAt,endedAt=null) => Math.max(0,Math.floor(((endedAt?new Date(endedAt).getTime():Date.now())-new Date(startedAt).getTime())/60000));
     const matchDuration = (startedAt,completedAt) => {if(!startedAt||!completedAt)return'—';const seconds=Math.max(0,Math.floor((new Date(completedAt).getTime()-new Date(startedAt).getTime())/1000));if(!Number.isFinite(seconds))return'—';const hours=Math.floor(seconds/3600),minutes=Math.floor(seconds%3600/60),remaining=String(seconds%60).padStart(2,'0');return hours?`${hours}:${String(minutes).padStart(2,'0')}:${remaining}`:`${minutes}:${remaining}`;};
@@ -887,8 +1041,36 @@
         $$('[data-picker-player]',playerPickerSheet).forEach(b=>b.onclick=()=>selectManualPlayer(b.dataset.pickerPlayer));const clear=$('#clear-manual-slot');if(clear)clear.onclick=clearManualSlot;$('#picker-cancel').onclick=dismissPlayerPicker;
         playerPicker.hidden=false;
     }
+    function showPlayerPicker(match,index,fromStaged=false){
+        pickerMatchId=match.id;
+        pickerSlotIndex=index;
+        pickerWasStaged=fromStaged;
+        const s=state.current,selected=match.manualSlots[index],teamRestriction=selected&&s.mode==='team';
+        const players=teamRestriction?s.players.filter(player=>player.teamIndex===selected.teamIndex):s.players;
+        const available=player=>s.waiting.some(item=>item.id===player.id)&&(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&!playerAssignment(player,s);
+        const assignment=player=>playerAssignment(player,s)||playerStatusLabel(player);
+        const description=teamRestriction?`Showing all ${players.length} players from ${s.teamNames?.[selected.teamIndex]||teamPalette[selected.teamIndex]?.[0]||'this team'}`:`Showing all ${players.length} players`;
+        playerPickerSheet.innerHTML=`<div class="player-picker-head"><h3 id="player-picker-title">Pick player</h3><p>${description}</p></div>${selected?'<button class="clear-manual-slot" id="clear-manual-slot">Clear this slot</button>':''}<span class="picker-label">Team players · ${players.length}</span><div>${players.length?players.map(player=>{const isAvailable=available(player),mins=Math.max(0,Math.floor((Date.now()-new Date(player.queuedAt||s.startedAt))/60000)),status=isAvailable?'Available':assignment(player);return `<button class="picker-player" data-picker-player="${player.id}" type="button" ${isAvailable?'':'disabled'}><span class="waiting-avatar">${escapeHtml(playerInitials(player))}</span><span><strong>${escapeHtml(player.name)}</strong><small>${isAvailable?`Available · waiting ${mins}m`:escapeHtml(status)}</small></span><span class="picker-wait">${isAvailable?'Select':'Unavailable'}</span></button>`;}).join(''):'<p class="hint">No players are eligible for this match.</p>'}</div><div class="picker-cancel-wrap"><button class="winner-cancel" id="picker-cancel" type="button">Cancel</button></div>`;
+        const prospectiveTeammate=match.manualSlots[[0,1].includes(index)?([0,1].find(slot=>slot!==index)):([2,3].find(slot=>slot!==index))];
+        if(prospectiveTeammate)$$('[data-picker-player]',playerPickerSheet).forEach(button=>{const player=s.players.find(item=>item.id===button.dataset.pickerPlayer),related=player?.id===prospectiveTeammate.id?selected:player,count=teammatePairCount(related,prospectiveTeammate,s);if(count){const detail=$('small',button);if(detail)detail.textContent=`${detail.textContent} · Paired with ${prospectiveTeammate.name}: ${count}x`;}});
+        $$('[data-picker-player]',playerPickerSheet).forEach(button=>button.onclick=()=>selectManualPlayer(button.dataset.pickerPlayer));
+        const clear=$('#clear-manual-slot');
+        if(clear)clear.onclick=clearManualSlot;
+        $('#picker-cancel').onclick=dismissPlayerPicker;
+        playerPicker.hidden=false;
+    }
     function editStagedPlayer(match,index){match.manualSlots=[...match.teamA,...match.teamB];match.teamA=[];match.teamB=[];save();showPlayerPicker(match,index,true);}
     function selectManualPlayer(playerId){const s=state.current,match=s.matches.find(m=>m.id===pickerMatchId),player=s.waiting.find(p=>p.id===playerId);if(!match||!player)return;const previous=match.manualSlots[pickerSlotIndex];if(previous){previous.queuedAt=new Date().toISOString();s.waiting.push(previous);}s.waiting=s.waiting.filter(p=>p.id!==playerId);match.manualSlots[pickerSlotIndex]=player;hidePlayerPicker();match.manualSlots.every(Boolean)?finalizeManual(match):(save(),renderActive());}
+    function selectManualPlayer(playerId){
+        const s=state.current,match=s.matches.find(item=>item.id===pickerMatchId),player=s.waiting.find(item=>item.id===playerId);
+        if(!match||!player||(player.status||'ready')!=='ready'||playerAssignment(player,s)){toast('That player is already assigned and cannot be selected.');return;}
+        const previous=match.manualSlots[pickerSlotIndex];
+        if(previous){previous.queuedAt=new Date().toISOString();s.waiting.push(previous);}
+        s.waiting=s.waiting.filter(item=>item.id!==playerId);
+        match.manualSlots[pickerSlotIndex]=player;
+        hidePlayerPicker();
+        match.manualSlots.every(Boolean)?finalizeManual(match):(save(),renderActive());
+    }
     function clearManualSlot(){const match=state.current?.matches.find(m=>m.id===pickerMatchId),player=match?.manualSlots[pickerSlotIndex];if(!match||!player)return;player.queuedAt=new Date().toISOString();state.current.waiting.push(player);match.manualSlots[pickerSlotIndex]=null;hidePlayerPicker();save();renderActive();}
     playerPicker.onclick=e=>{if(e.target===playerPicker)dismissPlayerPicker();};
     const playerActionSheet=$('#player-action-sheet'),playerActionPanel=$('#player-action-panel');
@@ -934,6 +1116,7 @@
         // Always render names from the master session roster. Saved queue/court records can otherwise retain an old name.
         const playerNames=new Map(s.players.map(player=>[player.id,player.name])),syncNames=players=>(players||[]).forEach(player=>{const name=playerNames.get(player?.id);if(name)player.name=name;});
         syncNames(s.waiting);s.matches.forEach(match=>{syncNames(match.teamA);syncNames(match.teamB);syncNames(match.manualSlots);syncNames(match.nextQueue);});s.upNext.forEach(next=>{syncNames(next.teamA);syncNames(next.teamB);});
+        rebuildTeamSchedulingHistory(s);
         const readyCount=s.waiting.filter(p=>(p.status||'ready')==='ready').length,canAddTeamMatch=s.mode==='team'&&canMakeTeamMatch(s);
         $('#active-title').textContent=s.name;
         const played=s.played||s.matches.filter(m=>m.done).length;
@@ -967,13 +1150,18 @@
         const openCourt=s.matches.find(m=>!m.teamA?.length&&!m.manualSlots),upNext=s.upNext||[];
         const teamMatchHint=s.mode==='team'&&!canAddTeamMatch?' title="Need two waiting players from each of two different teams"':'';
         $('#up-next').innerHTML=`<section class="up-next"><div class="up-next-head"><h3>Matchmaking · Up next ${upNext.length}</h3><button class="up-next-add" id="add-up-next" type="button" ${s.mode==='team'?!canAddTeamMatch?'disabled':'':readyCount<4?'disabled':''}${teamMatchHint}>＋ Add match</button></div>${upNext.length?`<div class="up-next-grid">${upNext.map((item,index)=>`<article class="up-next-card"><div class="up-next-card-head"><span>Up Next ${index+1} · Auto</span><span>${item.teamA.length+item.teamB.length}/4</span></div><div class="up-next-teams">${[['TEAM 1',item.teamA],['TEAM 2',item.teamB]].map(([label,team])=>`<div class="up-next-team"><label>${label}</label>${team.map(p=>`<div class="up-next-player"><span>${escapeHtml(p.name)}</span><button data-up-next-edit="${item.id}" data-up-next-player="${p.id}" type="button" title="Replace player">✎</button><button data-up-next-remove="${item.id}" data-up-next-player="${p.id}" type="button" title="Remove player">×</button></div>`).join('')}</div>`).join('')}</div><div class="up-next-actions"><button class="send-up-next" data-send-up-next="${item.id}" type="button" ${!openCourt||item.teamA.length!==2||item.teamB.length!==2?'disabled':''}>${openCourt?`Send to Court ${openCourt.court}`:'No open court'}</button></div></article>`).join('')}</div>`:'<p class="hint">Optional — prepare the next matches before a court opens.</p>'}</section>`;
+        if(s.mode==='team')$('.up-next-head',$('#up-next'))?.insertAdjacentHTML('beforeend','<button class="up-next-add" id="add-manual-team-match" type="button">Manual matchup</button>');
         if(s.mode==='team')$$('.up-next-card').forEach((card,index)=>{const item=upNext[index],labels=$$('label',card),panels=$$('.up-next-team',card),indices=[item.teamAIndex,item.teamBIndex];indices.forEach((teamIndex,side)=>{const color=s.teamColors?.[teamIndex]||teamPalette[teamIndex]?.[1]||'#1673d1',name=teamIndex===undefined?`Team ${side===0?'A':'B'}`:(s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`),logoUrl=teamLogoUrl(teamLogo(teamIndex,s));labels[side].textContent=name;labels[side].style.color=color;panels[side].style.backgroundColor=`${color}20`;panels[side].style.borderTop=`3px solid ${color}`;if(logoUrl)panels[side].insertAdjacentHTML('afterbegin',`<img class="up-next-team-logo" src="${escapeHtml(logoUrl)}" alt="">`);});card.style.borderColor=s.teamColors?.[item.teamAIndex]||teamPalette[item.teamAIndex]?.[1]||'#a7edc3';});
+        if(s.mode==='team')$$('.up-next-card-head',$('#up-next')).forEach((head,index)=>{if(upNext[index].manual)head.querySelector('span').textContent=`Up Next ${index+1} · Manual`;});
         if(s.mode==='team')$$('.up-next-card').forEach((card,index)=>{const item=upNext[index];[['teamA',item.teamA],['teamB',item.teamB]].forEach(([side,team],teamSide)=>{if(team.length<2)$$('.up-next-team',card)[teamSide].insertAdjacentHTML('beforeend',`<button class="manual-pick" data-up-next-add="${item.id}" data-up-next-side="${side}" type="button">＋ Add player</button>`);});});
+        if(s.mode==='team')$$('.up-next-card').forEach((card,index)=>{const item=upNext[index];[['teamA',item.teamA],['teamB',item.teamB]].forEach(([side,team],teamSide)=>{if(team.length<2)$$('.up-next-team',card)[teamSide].insertAdjacentHTML('beforeend',`<button class="manual-pick" data-up-next-autofill="${item.id}" data-up-next-side="${side}" type="button">Auto-fill</button>`);});});
         $$('.up-next-card-head').forEach((head,index)=>head.insertAdjacentHTML('beforeend',`<button class="remove-up-next" data-remove-up-next="${upNext[index].id}" type="button" aria-label="Remove Up Next ${index+1}">×</button>`));
         const addUpNextButton=$('#add-up-next');if(addUpNextButton){addUpNextButton.disabled=s.mode==='team'?!canAddTeamMatch:readyCount<4;addUpNextButton.textContent='＋ Add match';addUpNextButton.onclick=addUpNext;}
+        const manualTeamMatchButton=$('#add-manual-team-match');if(manualTeamMatchButton)manualTeamMatchButton.onclick=()=>showManualTeamMatchPicker();
         $$('[data-remove-up-next]').forEach(b=>b.onclick=()=>removeUpNext(b.dataset.removeUpNext));
         $$('[data-up-next-remove]').forEach(b=>b.onclick=()=>removeUpNextPlayer(b.dataset.upNextRemove,b.dataset.upNextPlayer));
         $$('[data-up-next-add]').forEach(b=>b.onclick=()=>addUpNextPlayer(b.dataset.upNextAdd,b.dataset.upNextSide));
+        $$('[data-up-next-autofill]').forEach(b=>b.onclick=()=>autoFillUpNextPlayer(b.dataset.upNextAutofill,b.dataset.upNextSide));
         $$('[data-up-next-edit]').forEach(b=>b.onclick=()=>editUpNextPlayer(b.dataset.upNextEdit,b.dataset.upNextPlayer));
         $$('[data-send-up-next]').forEach(b=>b.onclick=()=>sendUpNext(b.dataset.sendUpNext));
         $$('[data-open-match]').forEach(card=>{const open=()=>{openMatchId=card.dataset.openMatch;show('match-detail');};card.onclick=open;card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}};});
@@ -1011,6 +1199,19 @@
     function renderSessionSummary(){const s=state.summary;if(!s){show('home');return;}const players=[...(s.players||[])].sort((a,b)=>(b.wins||0)-(a.wins||0)||(b.gamesPlayed||0)-(a.gamesPlayed||0)||a.name.localeCompare(b.name)),matches=s.completedMatches||[],duration=Math.max(0,new Date(s.endedAt).getTime()-new Date(s.startedAt).getTime()),minutes=Math.floor(duration/60000),durationText=minutes>=60?`${Math.floor(minutes/60)}h ${minutes%60}m`:`${minutes}m`,withScore=matches.filter(m=>Number(m.scoreA)>0||Number(m.scoreB)>0).length,top=players.slice(0,3);const topRows=top.map((p,index)=>{const games=p.gamesPlayed||0,wins=p.wins||0,rate=games?Math.round(wins/games*100):0;return `<div class="standing-row top-${index+1}"><span class="standing-rank leader">${index+1}</span><div><div class="standing-name">${escapeHtml(p.name)} <span class="standing-stars">${'★'.repeat(playerRating(p))}</span></div><div class="standing-meta">${rate}% win rate · ${games} ${games===1?'game':'games'}</div></div><span class="standing-wins">${wins}<small>wins</small></span></div>`}).join('');const matchRows=[...matches].reverse().map(item=>{const aWinner=item.winner==='a',bWinner=item.winner==='b',noWinner=!item.winner,noScore=Number(item.scoreA)===0&&Number(item.scoreB)===0,scores=noWinner?'<span class="no-winner-label">No winner</span>':noScore?`<span class="${aWinner?'winner-mark':'loser-mark'}">${aWinner?'W':'—'}</span><span class="${bWinner?'winner-mark':'loser-mark'}">${bWinner?'W':'—'}</span>`:`<span class="${aWinner?'winning-score':''}">${item.scoreA}</span><span class="${bWinner?'winning-score':''}">${item.scoreB}</span>`;return `<div class="history-match ${noWinner?'no-winner-row':''}"><span class="history-round">R${item.round||1}</span><div class="history-teams"><span class="${aWinner?'winner':''}">${escapeHtml(item.teamA.join(' & '))}</span><span class="${bWinner?'winner':''}">${escapeHtml(item.teamB.join(' & '))}</span></div><div class="history-score">${scores}</div></div>`}).join('');$('#session-summary-content').innerHTML=`<h3 class="summary-name">${escapeHtml(s.name)}</h3><p class="summary-date">${new Date(s.startedAt).toLocaleString()}</p><div class="summary-metrics"><div class="summary-metric"><strong>${durationText}</strong><span>Duration</span></div><div class="summary-metric"><strong>${s.played||matches.length}</strong><span>Matches</span></div><div class="summary-metric"><strong>${withScore}</strong><span>With score</span></div><div class="summary-metric"><strong>${players.length}</strong><span>Players</span></div></div>${topRows?`<h3 class="summary-block-title">Top 3 players</h3><div class="standings-panel" style="width:100%;box-shadow:none;border:1px solid #dbe1e9">${topRows}</div>`:''}<h3 class="summary-block-title">Player stats</h3><div class="summary-table"><div class="summary-table-head"><span>#</span><span>Player</span><span>GP</span><span>W</span><span>L</span></div>${players.map((p,index)=>`<div class="summary-player"><span class="summary-player-number">${index+1}</span><strong>${escapeHtml(p.name)} <small class="summary-rating">${'★'.repeat(playerRating(p))}</small></strong><span>${p.gamesPlayed||0}</span><span>${p.wins||0}</span><span>${p.losses||0}</span></div>`).join('')}</div>${matchRows?`<h3 class="summary-block-title">Match history · ${matches.length}</h3><div class="match-history-card">${matchRows}</div>`:''}`;}
     function renderSummaryPlayerStats(){const table=$('.summary-table'),s=state.summary;if(!table||!s)return;const players=[...(s.players||[])].sort((a,b)=>(b.wins||0)-(a.wins||0)||(b.gamesPlayed||0)-(a.gamesPlayed||0)||a.name.localeCompare(b.name));table.innerHTML=`<div class="summary-table-head"><span>#</span><span>Player</span><span>Games</span><span>W</span><span>L</span><span>Win rate</span></div>${players.map((p,index)=>{const games=p.gamesPlayed||0,wins=p.wins||0,rate=games?Math.round(wins/games*100):0;return `<div class="summary-player"><span class="summary-player-number">${index+1}</span><strong>${escapeHtml(p.name)} <small class="summary-rating">${'★'.repeat(playerRating(p))}</small></strong><span>${games}</span><span>${wins}</span><span>${p.losses||0}</span><span>${rate}%</span></div>`}).join('')}`;}
     function renderTeamSummary(){const s=state.summary,content=$('#session-summary-content');if(!s||!content)return;const teams=Array.from({length:s.teamCount||0},(_,index)=>{const members=s.players.filter(player=>player.teamIndex===index),wins=Math.round(members.reduce((sum,player)=>sum+(player.wins||0),0)/2),losses=Math.round(members.reduce((sum,player)=>sum+(player.losses||0),0)/2);return {index,name:s.teamNames?.[index]||teamPalette[index]?.[0]||`Team ${index+1}`,wins,losses,points:wins};}).sort((a,b)=>b.points-a.points||b.wins-a.wins);const titles=$$('.summary-block-title',content);if(titles[0])titles[0].textContent='Top Teams';const topPanel=$('.standings-panel',content);if(topPanel)topPanel.innerHTML=teams.slice(0,3).map((team,index)=>`<div class="standing-row top-${index+1}"><span class="standing-rank leader">${['🥇','🥈','🥉'][index]}</span><div><div class="standing-name">${teamLogoMarkup(team.index,s)}${escapeHtml(team.name)}</div><div class="standing-meta">${team.wins} wins · ${team.losses} losses · ${team.points} points</div></div><span class="standing-wins">${team.points}<small>points</small></span></div>`).join('');if(titles[1])titles[1].textContent='Player Statistics';const table=$('.summary-table',content);if(table){const players=[...(s.players||[])].sort((a,b)=>{const gamesA=a.gamesPlayed||0,gamesB=b.gamesPlayed||0,winsA=a.wins||0,winsB=b.wins||0,rateA=gamesA?winsA/gamesA:0,rateB=gamesB?winsB/gamesB:0;return rateB-rateA||winsB-winsA||gamesB-gamesA||a.name.localeCompare(b.name);});table.classList.add('team-player-summary');table.innerHTML=`<div class="summary-table-head"><span>#</span><span>Player / Team</span><span>Games</span><span>W</span><span>L</span><span>Win rate</span></div>${players.map((player,index)=>{const team=s.teamNames?.[player.teamIndex]||teamPalette[player.teamIndex]?.[0]||'Unassigned',games=player.gamesPlayed||0,wins=player.wins||0,rate=games?Math.round(wins/games*100):0,logo=Number.isInteger(player.teamIndex)?teamLogoMarkup(player.teamIndex,s):'',medal=['🥇','🥈','🥉'][index]||index+1;return `<div class="summary-player ${index<3?`top-${index+1}`:''}"><span>${medal}</span><strong>${escapeHtml(player.name)} <small style="display:block;color:var(--muted)">${logo}${escapeHtml(team)}</small></strong><span>${games}</span><span>${wins}</span><span>${player.losses||0}</span><span>${rate}%</span></div>`;}).join('')}`;}}
+    function renderFourthTeamSummary(){
+        const s=state.summary,content=$('#session-summary-content');
+        if(!s||!content)return;
+        const fourth=Array.from({length:s.teamCount||0},(_,index)=>{
+            const members=s.players.filter(player=>player.teamIndex===index);
+            const wins=Math.round(members.reduce((sum,player)=>sum+(player.wins||0),0)/2);
+            const losses=Math.round(members.reduce((sum,player)=>sum+(player.losses||0),0)/2);
+            return {index,name:s.teamNames?.[index]||teamPalette[index]?.[0]||`Team ${index+1}`,wins,losses,points:wins};
+        }).sort((a,b)=>b.points-a.points||b.wins-a.wins)[3];
+        const topPanel=$('.standings-panel',content);
+        if(!fourth||!topPanel)return;
+        topPanel.insertAdjacentHTML('beforeend',`<div class="standing-row top-4"><span class="standing-rank leader">4</span><div><div class="standing-name">${teamLogoMarkup(fourth.index,s)}${escapeHtml(fourth.name)}</div><div class="standing-meta">${fourth.wins} wins · ${fourth.losses} losses · ${fourth.points} points</div></div><span class="standing-wins">${fourth.points}<small>points</small></span></div>`);
+    }
     function renderSummaryMatchDurations(){const matches=[...(state.summary?.completedMatches||[])].reverse(),scores=$$('#session-summary-content .history-score');scores.forEach((score,index)=>{const item=matches[index];if(!item||score.querySelector('.history-duration'))return;score.insertAdjacentHTML('beforeend',`<span class="history-duration" title="Match duration">${matchDuration(item.startedAt,item.completedAt)}</span>`);});}
     bindScoreButton('#score-team-a','a');bindScoreButton('#score-team-b','b');
     $('#match-cancel').onclick=()=>show('active');
