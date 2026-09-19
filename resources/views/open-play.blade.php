@@ -210,6 +210,7 @@
         .up-next-player { display:flex; align-items:center; justify-content:space-between; gap:.3rem; min-height:27px; color:#1d3147; font-size:.72rem; font-weight:700; }
         .up-next-player button { width:20px; height:20px; padding:0; border:0; border-radius:5px; background:transparent; color:#94a0ae; cursor:pointer; }
         .up-next-player button:hover { background:#fff; color:#d5534d; }
+        .pair-warning { margin:.35rem 0 0; padding:.28rem .35rem; border-radius:6px; background:#fff0cf; color:#9a6200; font-size:.59rem; font-weight:800; line-height:1.35; }
         .up-next-actions { display:flex; gap:.4rem; padding:.5rem; }
         .up-next-actions button { flex:1; padding:.45rem; border:0; border-radius:7px; cursor:pointer; font-size:.68rem; font-weight:800; }
         .send-up-next { background:#18a657; color:#fff; }.edit-up-next { background:#e8edf3; color:#5e697a; }
@@ -286,6 +287,7 @@
         .history-score .winning-score { color:#16834a; }
         .history-duration { margin-top:.18rem; color:#7e8a9d; font-size:.57rem; font-weight:750; white-space:nowrap; }
         .history-duration:before { content:"◷ "; color:#4d8ed8; }
+        .history-edit { justify-self:end; padding:.2rem .35rem; border:1px solid #cbd5e1; border-radius:5px; background:#fff; color:#526174; cursor:pointer; font-size:.58rem; font-weight:800; }
         .winner-mark { display:grid; min-width:25px; height:25px; place-items:center; border-radius:50%; background:#daf5e4; color:#128146; font-size:.68rem; font-weight:900; box-shadow:0 2px 6px rgb(22 131 74 / .15); }
         .loser-mark { color:#a4adba; text-align:center; }
         .no-winner-label { padding:.27rem .5rem; border-radius:99px; background:#fff0cf; color:#aa6500; font-size:.6rem; font-weight:850; white-space:nowrap; }
@@ -683,7 +685,7 @@
     if(offlineStateIsNewer&&navigator.onLine)syncState(offlineState).then(()=>toast('Recovered newer Open Play data')).catch(()=>{});
     window.setInterval(()=>{if(!navigator.onLine)return;const persistedState=persistedSnapshot();persistOffline(persistedState);syncState(persistedState).catch(()=>{});},60000);
     if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('/pwa-sw.js'));
-    const archiveSession = session => fetch({{ Illuminate\Support\Js::from(route('open-play.sessions.archive')) }},{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':csrfToken},body:JSON.stringify({session})}).then(response=>{if(!response.ok)throw new Error('Unable to archive session');return response.json();}).catch(()=>toast('Session history could not be saved'));
+    const archiveSession = session => fetch({{ Illuminate\Support\Js::from(route('open-play.sessions.archive')) }},{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':csrfToken},body:JSON.stringify({session})}).then(async response=>{if(!response.ok)throw new Error(`Unable to archive session (${response.status})`);return response.json();});
     function renderTheme(){const dark=state.theme==='dark';document.documentElement.dataset.theme=state.theme;$('#theme-toggle').textContent=dark?'☀':'☾';$('#theme-toggle').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
     $('#theme-toggle').onclick=()=>{state.theme=state.theme==='dark'?'light':'dark';renderTheme();save();};
     renderTheme();
@@ -779,10 +781,20 @@
         if((session.upNext||[]).some(match=>[...(match.teamA||[]),...(match.teamB||[])].some(item=>item?.id===player.id)))return 'Queued';
         return null;
     }
+    function autoQueueEligiblePlayers(session=state.current){
+        if(!session)return [];
+        const seen=new Set();
+        return (session.waiting||[]).filter(player=>{
+            const canonical=(session.players||[]).find(item=>item.id===player.id),gamesPlayed=canonical?.gamesPlayed??player.gamesPlayed??0;
+            if(seen.has(player.id)||!isAvailable(player)||!isAvailable(canonical||player)||gamesPlayed>=session.gamesPerPlayer||playerAssignment(player,session))return false;
+            seen.add(player.id);
+            return true;
+        });
+    }
     function canMakeTeamMatch(session=state.current){
         if(!session)return false;
-        const eligible=session.waiting.filter(player=>isAvailable(player)&&(player.gamesPlayed||0)<session.gamesPerPlayer),groups=Array.from({length:session.teamCount||0},(_,index)=>eligible.filter(player=>player.teamIndex===index));
-        return groups.filter(group=>twoPlayerChoices(group).some(([first,second])=>canUseTeamPair(first,second,session))).length>=2;
+        const eligible=autoQueueEligiblePlayers(session),groups=Array.from({length:session.teamCount||0},(_,index)=>eligible.filter(player=>player.teamIndex===index));
+        return groups.filter(group=>group.length>=2).length>=2;
     }
     const playerInitials = player => player.name.trim().split(/\s+/).slice(0,2).map(part=>part[0]).join('').toUpperCase();
     const teamPalette=[['Red Team','#e05252'],['Orange Team','#ef8a32'],['Yellow Team','#f3c614'],['Green Team','#47a86e'],['Brown Team','#8a6348'],['Blue Team','#3c82d0'],['Purple Team','#8564c6'],['Pink Team','#d66f9e'],['Teal Team','#319d9d']];
@@ -806,6 +818,11 @@
     const canUseTeamPair = (first,second,session=state.current) => {const key=playerPairKey(first,second);if(!(session?.teammateHistory?.[key]||0))return true;const roster=(session?.players||[]).filter(player=>player.teamIndex===first.teamIndex);return [first,second].every(player=>roster.filter(teammate=>teammate.id!==player.id).every(teammate=>(session?.teammateHistory?.[playerPairKey(player,teammate)]||0)>0));};
     const playersHavePlayedTogether = (first,second,session=state.current) => {const key=playerPairKey(first,second);return Boolean(session?.teammateHistory?.[key]||session?.opponentHistory?.[key]);};
     const teammatePairCount = (first,second,session=state.current) => first&&second?(session?.teammateHistory?.[playerPairKey(first,second)]||0):0;
+    const completedTeammatePairCount = (first,second,session=state.current) => {
+        if(!first||!second)return 0;
+        const names=[first.name,second.name].map(name=>String(name).toLocaleLowerCase()).sort().join('|');
+        return (session?.completedMatches||[]).reduce((count,match)=>count+['teamA','teamB'].filter(side=>(match[side]||[]).map(name=>String(name).toLocaleLowerCase()).sort().join('|')===names).length,0);
+    };
     const newOpponentsOnly = (candidates,currentPlayers,session=state.current) => candidates.filter(candidate=>currentPlayers.every(player=>!playersHavePlayedTogether(candidate,player,session)));
     const twoPlayerChoices = players => players.flatMap((first,index)=>players.slice(index+1).map(second=>[first,second]));
     function createTeamPairPlan(players,teamCount,gamesPerPlayer){
@@ -846,18 +863,36 @@
     function stageTeamCourtWithHistory(match){
         const s=state.current;
         if(!s||match.teamA.length||match.manualSlots)return;
-        const now=Date.now(),eligible=s.waiting.filter(player=>isAvailable(player)&&(player.gamesPlayed||0)<s.gamesPerPlayer),groups=Array.from({length:s.teamCount||0},(_,index)=>({index,players:eligible.filter(player=>player.teamIndex===index)})).filter(group=>group.players.length>=2),recentPairs=new Set(s.lastTeammatePairKeys||[]),candidates=[];
+        const eligible=autoQueueEligiblePlayers(s),groups=Array.from({length:s.teamCount||0},(_,index)=>({index,players:eligible.filter(player=>player.teamIndex===index)})).filter(group=>group.players.length>=2),recentPairs=new Set(s.lastTeammatePairKeys||[]),candidates=[];
         for(let left=0;left<groups.length;left++)for(let right=left+1;right<groups.length;right++)for(const teamA of twoPlayerChoices(groups[left].players))for(const teamB of twoPlayerChoices(groups[right].players)){
-            const firstPairKey=playerPairKey(teamA[0],teamA[1]),secondPairKey=playerPairKey(teamB[0],teamB[1]),players=[...teamA,...teamB],games=players.reduce((sum,player)=>sum+(player.gamesPlayed||0),0),rest=players.reduce((sum,player)=>sum+(now-new Date(player.queuedAt||s.startedAt).getTime())/60000,0),teammate=(s.teammateHistory?.[firstPairKey]||0)+(s.teammateHistory?.[secondPairKey]||0),opponents=teamA.reduce((sum,a)=>sum+teamB.reduce((inner,b)=>inner+(s.opponentHistory?.[playerPairKey(a,b)]||0),0),0),matchup=s.matchupCounts?.[matchupKey(groups[left].index,groups[right].index)]||0;
-            candidates.push({teamA,teamB,a:groups[left].index,b:groups[right].index,pairKeys:[firstPairKey,secondPairKey],immediateRepeat:recentPairs.has(firstPairKey)||recentPairs.has(secondPairKey),score:matchup*100+teammate*30+opponents*12+games*25-rest*.02+Math.random()*4});
+            const firstPairKey=playerPairKey(teamA[0],teamA[1]),secondPairKey=playerPairKey(teamB[0],teamB[1]),teammate=(s.teammateHistory?.[firstPairKey]||0)+(s.teammateHistory?.[secondPairKey]||0),opponents=teamA.reduce((sum,a)=>sum+teamB.reduce((inner,b)=>inner+(s.opponentHistory?.[playerPairKey(a,b)]||0),0),0),matchup=s.matchupCounts?.[matchupKey(groups[left].index,groups[right].index)]||0;
+            const immediateRepeat=recentPairs.has(firstPairKey)||recentPairs.has(secondPairKey);
+            candidates.push({teamA,teamB,a:groups[left].index,b:groups[right].index,pairKeys:[firstPairKey,secondPairKey],immediateRepeat,score:matchup*100+teammate*30+opponents*12+(immediateRepeat?60:0)+Math.random()*4});
         }
         if(!candidates.length){toast('Need two available players from two different teams');return;}
-        // Never repeat either pair from the preceding queued match when another valid pairing is available.
-        // A team may repeat a pair only after that team's available players have exhausted every new pair.
-        // One exhausted team must not force the opposing team to repeat early.
-        const unplayedPlannedPairs=new Map(groups.map(group=>[group.index,new Set((s.teamPairPlan?.[group.index]||[]).filter(key=>(s.teammateHistory?.[key]||0)===0))])),strictPairingCandidates=candidates.filter(candidate=>canUseTeamPair(candidate.teamA[0],candidate.teamA[1],s)&&canUseTeamPair(candidate.teamB[0],candidate.teamB[1],s)),plannedCandidates=strictPairingCandidates.filter(candidate=>unplayedPlannedPairs.get(candidate.a)?.has(candidate.pairKeys[0])&&unplayedPlannedPairs.get(candidate.b)?.has(candidate.pairKeys[1])),newPairCandidates=strictPairingCandidates.filter(candidate=>candidate.pairKeys.every(key=>(s.teammateHistory?.[key]||0)===0)),nonRepeatingCandidates=newPairCandidates.filter(candidate=>!candidate.immediateRepeat),selection=plannedCandidates.length?plannedCandidates:(nonRepeatingCandidates.length?nonRepeatingCandidates:(newPairCandidates.length?newPairCandidates:strictPairingCandidates));
-        if(!selection.length){toast('No valid new teammate pairs remain for the waiting players');return;}
-        selection.sort((a,b)=>a.score-b.score);
+        // Fairness always comes first: select the least-played players, then the players
+        // who have waited longest. Round-robin history only resolves an otherwise fair tie.
+        const compareFairness=(first,second)=>{
+            const orderPlayers=candidate=>[...candidate.teamA,...candidate.teamB].sort((a,b)=>(a.gamesPlayed||0)-(b.gamesPlayed||0)||queuedAtTime(a,s)-queuedAtTime(b,s)||String(a.id).localeCompare(String(b.id)));
+            const firstPlayers=orderPlayers(first),secondPlayers=orderPlayers(second);
+            for(let index=0;index<firstPlayers.length;index++){
+                const gameDifference=(firstPlayers[index].gamesPlayed||0)-(secondPlayers[index].gamesPlayed||0);
+                if(gameDifference)return gameDifference;
+            }
+            for(let index=0;index<firstPlayers.length;index++){
+                const waitDifference=queuedAtTime(firstPlayers[index],s)-queuedAtTime(secondPlayers[index],s);
+                if(waitDifference)return waitDifference;
+            }
+            return 0;
+        };
+        // Keep each team's pre-built round-robin plan intact whenever both planned pairs
+        // are available. This prevents the final rounds from stranding a repeated pair.
+        // Fairness still chooses among all valid planned matches.
+        const freshPairingCandidates=candidates.filter(candidate=>canUseTeamPair(candidate.teamA[0],candidate.teamA[1],s)&&canUseTeamPair(candidate.teamB[0],candidate.teamB[1],s));
+        const remainingPlannedPairs=new Map(groups.map(group=>[group.index,new Set((s.teamPairPlan?.[group.index]||[]).filter(key=>(s.teammateHistory?.[key]||0)===0))]));
+        const plannedPairingCandidates=freshPairingCandidates.filter(candidate=>remainingPlannedPairs.get(candidate.a)?.has(candidate.pairKeys[0])&&remainingPlannedPairs.get(candidate.b)?.has(candidate.pairKeys[1]));
+        const selection=plannedPairingCandidates.length?plannedPairingCandidates:(freshPairingCandidates.length?freshPairingCandidates:[...candidates]);
+        selection.sort((a,b)=>compareFairness(a,b)||a.score-b.score);
         const chosen=selection[0],ids=new Set([...chosen.teamA,...chosen.teamB].map(player=>player.id));
         s.lastTeammatePairKeys=chosen.pairKeys;
         s.teammateHistory=s.teammateHistory||{};s.opponentHistory=s.opponentHistory||{};
@@ -873,7 +908,7 @@
     const waitMinutes = (player,session=state.current) => Math.max(0,Math.floor((Date.now()-queuedAtTime(player,session))/60000));
     const balancedPairKey = (a,b) => [a.id,b.id].sort().join('|');
     function balancedTeams(players,s){const options=[[[0,1],[2,3]],[[0,2],[1,3]],[[0,3],[1,2]]];s.balancedPairHistory=s.balancedPairHistory||{};const ratingGap=(a,b)=>!playerRating(a)||!playerRating(b)?0:Math.abs(playerRating(a)-playerRating(b));const scored=options.map(([a,b])=>{const pairs=[[players[a[0]],players[a[1]]],[players[b[0]],players[b[1]]]],repeats=pairs.reduce((sum,pair)=>sum+(s.balancedPairHistory[balancedPairKey(...pair)]||0),0),gap=pairs.reduce((sum,pair)=>sum+ratingGap(...pair),0);return {pairs,score:repeats*100+gap*8+Math.random()*6};}).sort((a,b)=>a.score-b.score)[0];scored.pairs.forEach(pair=>{const key=balancedPairKey(...pair);s.balancedPairHistory[key]=(s.balancedPairHistory[key]||0)+1;});return {teamA:scored.pairs[0],teamB:scored.pairs[1]};}
-    function stageCourt(match){ const s=state.current,available=s.waiting.filter(p=>(p.status||'ready')==='ready'),queued=(match.nextQueue||[]).filter(p=>(p.status||'ready')==='ready'),source=queued.length>=4?queued:available;if(match.teamA.length||match.manualSlots||source.length<4)return;const four=(s.mode==='balanced'?longestWaitingFirst(source,s):shuffled(source)).slice(0,4),teams=s.mode==='balanced'?balancedTeams(four,s):{teamA:[four[0],four[3]],teamB:[four[1],four[2]]};match.teamA=teams.teamA;match.teamB=teams.teamB;const ids=new Set(four.map(p=>p.id));s.waiting=s.waiting.filter(p=>!ids.has(p.id));match.nextQueue=(match.nextQueue||[]).filter(p=>!ids.has(p.id));match.started=false;match.startedAt=null;match.completedAt=null;match.done=false;save();renderActive(); }
+    function stageCourt(match){ const s=state.current,available=autoQueueEligiblePlayers(s),queued=(match.nextQueue||[]).filter(p=>(p.status||'ready')==='ready'),source=queued.length>=4?queued:available;if(match.teamA.length||match.manualSlots||source.length<4)return;const four=(s.mode==='balanced'?longestWaitingFirst(source,s):shuffled(source)).slice(0,4),teams=s.mode==='balanced'?balancedTeams(four,s):{teamA:[four[0],four[3]],teamB:[four[1],four[2]]};match.teamA=teams.teamA;match.teamB=teams.teamB;const ids=new Set(four.map(p=>p.id));s.waiting=s.waiting.filter(p=>!ids.has(p.id));match.nextQueue=(match.nextQueue||[]).filter(p=>!ids.has(p.id));match.started=false;match.startedAt=null;match.completedAt=null;match.done=false;save();renderActive(); }
     function unstageCourt(match){ const s=state.current;const queuedAt=new Date().toISOString();[...match.teamA,...match.teamB].forEach(p=>p.queuedAt=queuedAt);s.waiting.push(...match.teamA,...match.teamB);match.teamA=[];match.teamB=[];match.started=false;match.startedAt=null;match.completedAt=null;match.done=false;save();renderActive(); }
     function shuffleCourt(match){ const four=shuffled([...match.teamA,...match.teamB]);match.teamA=[four[0],four[1]];match.teamB=[four[2],four[3]];save();renderActive(); }
     function preferredAnnouncementVoice(){const voices=speechSynthesis.getVoices(),english=voices.filter(voice=>voice.lang?.toLowerCase().startsWith('en'));return english.find(voice=>/google.*(us|uk).*english|microsoft.*(aria|jenny|zira|susan)|samantha|serena/i.test(voice.name))||english.find(voice=>voice.default)||english[0]||voices.find(voice=>voice.default)||null;}
@@ -886,10 +921,17 @@
     function beginManual(match){match.manualSlots=[null,null,null,null];save();renderActive();}
     function finalizeManual(match){if(!match.manualSlots?.every(Boolean))return;match.teamA=[match.manualSlots[0],match.manualSlots[1]];match.teamB=[match.manualSlots[2],match.manualSlots[3]];delete match.manualSlots;match.started=false;match.done=false;save();renderActive();}
     function cancelManual(match){const queuedAt=new Date().toISOString();(match.manualSlots||[]).filter(Boolean).forEach(p=>{p.queuedAt=queuedAt;state.current.waiting.push(p);});delete match.manualSlots;save();renderActive();}
-    function addUpNext(){const s=state.current,available=s.waiting.filter(p=>(p.status||'ready')==='ready');if(s.mode==='team'){const next={id:newId(),teamA:[],teamB:[]};stageTeamCourtWithHistory(next);if(next.teamA.length===2&&next.teamB.length===2){s.upNext.push(next);save();renderActive();}return;}if(available.length<4)return;const picked=(s.mode==='balanced'?longestWaitingFirst(available,s):shuffled(available)).slice(0,4),ids=new Set(picked.map(p=>p.id)),teams=s.mode==='balanced'?balancedTeams(picked,s):{teamA:[picked[0],picked[3]],teamB:[picked[1],picked[2]]};s.waiting=s.waiting.filter(p=>!ids.has(p.id));s.upNext.push({id:newId(),...teams});save();renderActive();}
+    function addUpNext(){const s=state.current,available=autoQueueEligiblePlayers(s);if(s.mode==='team'){const next={id:newId(),teamA:[],teamB:[]};stageTeamCourtWithHistory(next);if(next.teamA.length===2&&next.teamB.length===2){s.upNext.push(next);save();renderActive();}return;}if(available.length<4)return;const picked=(s.mode==='balanced'?longestWaitingFirst(available,s):shuffled(available)).slice(0,4),ids=new Set(picked.map(p=>p.id)),teams=s.mode==='balanced'?balancedTeams(picked,s):{teamA:[picked[0],picked[3]],teamB:[picked[1],picked[2]]};s.waiting=s.waiting.filter(p=>!ids.has(p.id));s.upNext.push({id:newId(),...teams});save();renderActive();}
     function removeUpNextPlayer(nextId,playerId){const s=state.current,next=s.upNext.find(item=>item.id===nextId),player=next&&[...next.teamA,...next.teamB].find(p=>p.id===playerId);if(!player)return;player.queuedAt=new Date().toISOString();next.teamA=next.teamA.filter(p=>p.id!==playerId);next.teamB=next.teamB.filter(p=>p.id!==playerId);s.waiting.push(player);save();renderActive();}
     function removeUpNext(nextId){const s=state.current,next=s.upNext.find(item=>item.id===nextId);if(!next)return;[...next.teamA,...next.teamB].forEach(player=>{player.queuedAt=new Date().toISOString();s.waiting.push(player);});s.upNext=s.upNext.filter(item=>item.id!==nextId);save();renderActive();}
     const hasGameRemaining = (player,session=state.current) => session?.mode!=='team'||(session.players.find(item=>item.id===player.id)?.gamesPlayed??player.gamesPlayed??0)<session.gamesPerPlayer;
+    const playerGameCount = (player,session=state.current) => session?.players.find(item=>item.id===player.id)?.gamesPlayed??player.gamesPlayed??0;
+    const leastPlayedThenLongestWaiting = (players,session=state.current) => [...players].sort((a,b)=>playerGameCount(a,session)-playerGameCount(b,session)||queuedAtTime(a,session)-queuedAtTime(b,session)||a.name.localeCompare(b.name));
+    const unusedTeammateChoices = (players,teammate,session=state.current) => {
+        if(!teammate)return players;
+        const unused=players.filter(player=>teammatePairCount(player,teammate,session)===0);
+        return unused.length?unused:players;
+    };
     function addUpNextPlayer(nextId,side){const s=state.current,next=s.upNext.find(item=>item.id===nextId),team=next?.[side];if(!next||!team||team.length>=2)return;const teamIndex=side==='teamA'?next.teamAIndex:next.teamBIndex,available=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&player.teamIndex===teamIndex);if(!available.length){toast('No available player from this team');return;}const currentPlayers=[...next.teamA,...next.teamB],fresh=newOpponentsOnly(available,currentPlayers,s);let choices=fresh.length?fresh:available,showingAll=!fresh.length;const pick=()=>Number(window.prompt(`Add player:\n${choices.map((player,index)=>`${index+1}. ${player.name}`).join('\n')}${!showingAll&&fresh.length<available.length?'\n0. Show all eligible players':''}`));let choice=pick();if(choice===0&&!showingAll){choices=available;showingAll=true;choice=pick();}const player=choices[choice-1];if(!player)return;s.waiting=s.waiting.filter(item=>item.id!==player.id);team.push(player);save();renderActive();}
     function editUpNextPlayer(nextId,playerId){const s=state.current,next=s.upNext.find(item=>item.id===nextId),old=next&&[...next.teamA,...next.teamB].find(p=>p.id===playerId);if(!old)return;const available=s.waiting.filter(p=>(p.status||'ready')==='ready'&&hasGameRemaining(p,s)&&(s.mode!=='team'||p.teamIndex===old.teamIndex));if(!available.length){toast(s.mode==='team'?'No available replacement from this team':'No available replacement player');return;}const currentPlayers=[...next.teamA,...next.teamB].filter(player=>player.id!==old.id),fresh=newOpponentsOnly(available,currentPlayers,s);let choices=fresh.length?fresh:available,showingAll=!fresh.length;const teamName=s.mode==='team'?(s.teamNames?.[old.teamIndex]||teamPalette[old.teamIndex]?.[0]||`Team ${old.teamIndex+1}`):'',pick=()=>Number(window.prompt(`Replace ${old.name}${teamName?` (${teamName})`:''} with:\n${choices.map((p,index)=>`${index+1}. ${p.name}`).join('\n')}${!showingAll&&fresh.length<available.length?'\n0. Show all eligible players':''}`));let choice=pick();if(choice===0&&!showingAll){choices=available;showingAll=true;choice=pick();}const replacement=choices[choice-1];if(!replacement)return;const team=next.teamA.some(p=>p.id===playerId)?next.teamA:next.teamB,index=team.findIndex(p=>p.id===playerId);old.queuedAt=new Date().toISOString();s.waiting=s.waiting.filter(p=>p.id!==replacement.id);s.waiting.push(old);team[index]=replacement;save();renderActive();}
     // Manual queue changes intentionally show every eligible teammate. Pair history remains
@@ -961,10 +1003,10 @@
         const s=state.current,next=s.upNext.find(item=>item.id===nextId),team=next?.[side];
         if(!next||!team||team.length>=2)return;
         const teamIndex=side==='teamA'?next.teamAIndex:next.teamBIndex,teammate=team[0];
-        const eligible=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&player.teamIndex===teamIndex&&!playerAssignment(player,s));
-        const unusedPair=teammate?eligible.filter(player=>teammatePairCount(player,teammate,s)===0):eligible;
-        if(!unusedPair.length){toast(`No available unused teammate pairing remains for ${s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`}.`);return;}
-        const player=longestWaitingFirst(unusedPair,s)[0];
+        const eligible=autoQueueEligiblePlayers(s).filter(player=>player.teamIndex===teamIndex);
+        const choices=unusedTeammateChoices(eligible,teammate,s);
+        if(!choices.length){toast(`No available player remains for ${s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`}.`);return;}
+        const player=leastPlayedThenLongestWaiting(choices,s)[0];
         s.waiting=s.waiting.filter(item=>item.id!==player.id);
         team.push(player);
         save();
@@ -997,7 +1039,7 @@
         const s=state.current,emptySlots=match.manualSlots.map((player,index)=>player?null:index).filter(index=>index!==null),originalSlots=[...match.manualSlots],originalWaiting=[...s.waiting];
         if(!emptySlots.length)return;
         if(s.mode!=='team'){
-            const available=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s));
+            const available=autoQueueEligiblePlayers(s);
             if(available.length<emptySlots.length)return;
             const picked=(s.mode==='balanced'?longestWaitingFirst(available,s):shuffled(available)).slice(0,emptySlots.length),ids=new Set(picked.map(player=>player.id));
             s.waiting=s.waiting.filter(player=>!ids.has(player.id));
@@ -1008,10 +1050,10 @@
         for(const slot of emptySlots){
             const side=slot<2?'teamA':'teamB',sideSlots=side==='teamA'?[0,1]:[2,3],teammate=match.manualSlots[sideSlots.find(index=>index!==slot)],teamIndex=teammate?.teamIndex??match[`${side}Index`];
             if(!Number.isInteger(teamIndex)){match.manualSlots=originalSlots;s.waiting=originalWaiting;toast('Choose one player from this team before auto-fill.');return;}
-            const eligible=s.waiting.filter(player=>(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&player.teamIndex===teamIndex&&!playerAssignment(player,s));
-            const unusedPair=teammate?eligible.filter(player=>teammatePairCount(player,teammate,s)===0):eligible;
-            if(!unusedPair.length){match.manualSlots=originalSlots;s.waiting=originalWaiting;toast(`No unused teammate pairing is available for ${s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`}.`);return;}
-            const player=longestWaitingFirst(unusedPair,s)[0];
+            const eligible=autoQueueEligiblePlayers(s).filter(player=>player.teamIndex===teamIndex);
+            const choices=unusedTeammateChoices(eligible,teammate,s);
+            if(!choices.length){match.manualSlots=originalSlots;s.waiting=originalWaiting;toast(`No available player remains for ${s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`}.`);return;}
+            const player=leastPlayedThenLongestWaiting(choices,s)[0];
             s.waiting=s.waiting.filter(item=>item.id!==player.id);
             match.manualSlots[slot]=player;
         }
@@ -1047,11 +1089,14 @@
         pickerWasStaged=fromStaged;
         const s=state.current,selected=match.manualSlots[index],teamRestriction=selected&&s.mode==='team';
         const players=teamRestriction?s.players.filter(player=>player.teamIndex===selected.teamIndex):s.players;
-        const available=player=>s.waiting.some(item=>item.id===player.id)&&(player.status||'ready')==='ready'&&hasGameRemaining(player,s)&&!playerAssignment(player,s);
+        const availablePlayers=autoQueueEligiblePlayers(s),available=player=>availablePlayers.some(item=>item.id===player.id);
         const assignment=player=>playerAssignment(player,s)||playerStatusLabel(player);
-        const description=teamRestriction?`Showing all ${players.length} players from ${s.teamNames?.[selected.teamIndex]||teamPalette[selected.teamIndex]?.[0]||'this team'}`:`Showing all ${players.length} players`;
-        playerPickerSheet.innerHTML=`<div class="player-picker-head"><h3 id="player-picker-title">Pick player</h3><p>${description}</p></div>${selected?'<button class="clear-manual-slot" id="clear-manual-slot">Clear this slot</button>':''}<span class="picker-label">Team players · ${players.length}</span><div>${players.length?players.map(player=>{const isAvailable=available(player),mins=Math.max(0,Math.floor((Date.now()-new Date(player.queuedAt||s.startedAt))/60000)),status=isAvailable?'Available':assignment(player);return `<button class="picker-player" data-picker-player="${player.id}" type="button" ${isAvailable?'':'disabled'}><span class="waiting-avatar">${escapeHtml(playerInitials(player))}</span><span><strong>${escapeHtml(player.name)}</strong><small>${isAvailable?`Available · waiting ${mins}m`:escapeHtml(status)}</small></span><span class="picker-wait">${isAvailable?'Select':'Unavailable'}</span></button>`;}).join(''):'<p class="hint">No players are eligible for this match.</p>'}</div><div class="picker-cancel-wrap"><button class="winner-cancel" id="picker-cancel" type="button">Cancel</button></div>`;
         const prospectiveTeammate=match.manualSlots[[0,1].includes(index)?([0,1].find(slot=>slot!==index)):([2,3].find(slot=>slot!==index))];
+        const hasUnusedTeammate=Boolean(prospectiveTeammate&&availablePlayers.some(player=>player.teamIndex===prospectiveTeammate.teamIndex&&teammatePairCount(player,prospectiveTeammate,s)===0));
+        const canSelect=player=>available(player)&&(!hasUnusedTeammate||!prospectiveTeammate||teammatePairCount(player,prospectiveTeammate,s)===0);
+        const orderedPlayers=[...players].sort((a,b)=>Number(canSelect(b))-Number(canSelect(a))||playerGameCount(a,s)-playerGameCount(b,s)||queuedAtTime(a,s)-queuedAtTime(b,s)||a.name.localeCompare(b.name));
+        const description=teamRestriction?`Showing all ${players.length} players from ${s.teamNames?.[selected.teamIndex]||teamPalette[selected.teamIndex]?.[0]||'this team'}`:`Showing all ${players.length} players`;
+        playerPickerSheet.innerHTML=`<div class="player-picker-head"><h3 id="player-picker-title">Pick player</h3><p>${description}</p></div>${selected?'<button class="clear-manual-slot" id="clear-manual-slot">Clear this slot</button>':''}<span class="picker-label">Team players · ${players.length}</span><div>${players.length?orderedPlayers.map(player=>{const isAvailable=available(player),selectable=canSelect(player),mins=Math.max(0,Math.floor((Date.now()-new Date(player.queuedAt||s.startedAt))/60000)),status=!isAvailable?assignment(player):selectable?'Available':'Use an unused teammate pairing first';return `<button class="picker-player" data-picker-player="${player.id}" type="button" ${selectable?'':'disabled'}><span class="waiting-avatar">${escapeHtml(playerInitials(player))}</span><span><strong>${escapeHtml(player.name)}</strong><small>${selectable?`Available · ${playerGameCount(player,s)} games · waiting ${mins}m`:escapeHtml(status)}</small></span><span class="picker-wait">${selectable?'Select':'Unavailable'}</span></button>`;}).join(''):'<p class="hint">No players are eligible for this match.</p>'}</div><div class="picker-cancel-wrap"><button class="winner-cancel" id="picker-cancel" type="button">Cancel</button></div>`;
         if(prospectiveTeammate)$$('[data-picker-player]',playerPickerSheet).forEach(button=>{const player=s.players.find(item=>item.id===button.dataset.pickerPlayer),related=player?.id===prospectiveTeammate.id?selected:player,count=teammatePairCount(related,prospectiveTeammate,s);if(count){const detail=$('small',button);if(detail)detail.textContent=`${detail.textContent} · Paired with ${prospectiveTeammate.name}: ${count}x`;}});
         $$('[data-picker-player]',playerPickerSheet).forEach(button=>button.onclick=()=>selectManualPlayer(button.dataset.pickerPlayer));
         const clear=$('#clear-manual-slot');
@@ -1064,6 +1109,8 @@
     function selectManualPlayer(playerId){
         const s=state.current,match=s.matches.find(item=>item.id===pickerMatchId),player=s.waiting.find(item=>item.id===playerId);
         if(!match||!player||(player.status||'ready')!=='ready'||playerAssignment(player,s)){toast('That player is already assigned and cannot be selected.');return;}
+        const sameSide=pickerSlotIndex<2?[0,1]:[2,3],teammate=match.manualSlots[sameSide.find(slot=>slot!==pickerSlotIndex)],eligible=autoQueueEligiblePlayers(s).filter(candidate=>!teammate||s.mode!=='team'||candidate.teamIndex===teammate.teamIndex),choices=unusedTeammateChoices(eligible,teammate,s);
+        if(!choices.some(candidate=>candidate.id===player.id)){toast('Choose an unused teammate pairing while one is available.');return;}
         const previous=match.manualSlots[pickerSlotIndex];
         if(previous){previous.queuedAt=new Date().toISOString();s.waiting.push(previous);}
         s.waiting=s.waiting.filter(item=>item.id!==playerId);
@@ -1111,7 +1158,15 @@
         s.upNext.forEach(next=>{const before=next.teamA.length+next.teamB.length;next.teamA=next.teamA.filter(player=>!completedPlayerIds.has(player.id));next.teamB=next.teamB.filter(player=>!completedPlayerIds.has(player.id));removedCompletedFromQueue||=before!==next.teamA.length+next.teamB.length;});
         // A ready player belongs in exactly one place: waiting, a court, or an Up Next queue.
         // Restore players orphaned by older automatic-queue behavior back to the waiting pool.
-        const assignedPlayerIds=new Set([...(s.upNext||[]).flatMap(match=>[...(match.teamA||[]),...(match.teamB||[])]),...(s.matches||[]).flatMap(match=>[...(match.teamA||[]),...(match.teamB||[]),...(match.manualSlots||[]),...(match.nextQueue||[])])].filter(Boolean).map(player=>player.id)),waitingIds=new Set(s.waiting.map(player=>player.id)),restoredPlayers=s.players.filter(player=>isAvailable(player)&&!assignedPlayerIds.has(player.id)&&!waitingIds.has(player.id));
+        const assignedPlayerIds=new Set([...(s.upNext||[]).flatMap(match=>[...(match.teamA||[]),...(match.teamB||[])]),...(s.matches||[]).flatMap(match=>[...(match.teamA||[]),...(match.teamB||[]),...(match.manualSlots||[]),...(match.nextQueue||[])])].filter(Boolean).map(player=>player.id)),waitingIds=new Set(s.waiting.map(player=>player.id));
+        // Older saved sessions can leave the master record marked queued/away after its
+        // waiting-list copy was restored as ready. A player who is ready in the waiting
+        // pool and is not assigned anywhere must be selectable without toggling status.
+        s.waiting.forEach(waitingPlayer=>{
+            const master=s.players.find(player=>player.id===waitingPlayer.id);
+            if(master&&isAvailable(waitingPlayer)&&!isAvailable(master)&&playerStatus(master)!=='completed'&&!assignedPlayerIds.has(waitingPlayer.id))updatePlayer(waitingPlayer.id,{status:'ready'});
+        });
+        const restoredPlayers=s.players.filter(player=>isAvailable(player)&&!assignedPlayerIds.has(player.id)&&!waitingIds.has(player.id));
         if(restoredPlayers.length){const queuedAt=new Date().toISOString();s.waiting.push(...restoredPlayers.map(player=>({...player,queuedAt:player.queuedAt||queuedAt})));}if(restoredPlayers.length||removedCompletedFromQueue)save();
         // Always render names from the master session roster. Saved queue/court records can otherwise retain an old name.
         const playerNames=new Map(s.players.map(player=>[player.id,player.name])),syncNames=players=>(players||[]).forEach(player=>{const name=playerNames.get(player?.id);if(name)player.name=name;});
@@ -1149,7 +1204,7 @@
         $$('[data-remove-court]').forEach(b=>b.onclick=()=>removeCourt(s.matches.find(x=>x.id===b.dataset.removeCourt)));
         const openCourt=s.matches.find(m=>!m.teamA?.length&&!m.manualSlots),upNext=s.upNext||[];
         const teamMatchHint=s.mode==='team'&&!canAddTeamMatch?' title="Need two waiting players from each of two different teams"':'';
-        $('#up-next').innerHTML=`<section class="up-next"><div class="up-next-head"><h3>Matchmaking · Up next ${upNext.length}</h3><button class="up-next-add" id="add-up-next" type="button" ${s.mode==='team'?!canAddTeamMatch?'disabled':'':readyCount<4?'disabled':''}${teamMatchHint}>＋ Add match</button></div>${upNext.length?`<div class="up-next-grid">${upNext.map((item,index)=>`<article class="up-next-card"><div class="up-next-card-head"><span>Up Next ${index+1} · Auto</span><span>${item.teamA.length+item.teamB.length}/4</span></div><div class="up-next-teams">${[['TEAM 1',item.teamA],['TEAM 2',item.teamB]].map(([label,team])=>`<div class="up-next-team"><label>${label}</label>${team.map(p=>`<div class="up-next-player"><span>${escapeHtml(p.name)}</span><button data-up-next-edit="${item.id}" data-up-next-player="${p.id}" type="button" title="Replace player">✎</button><button data-up-next-remove="${item.id}" data-up-next-player="${p.id}" type="button" title="Remove player">×</button></div>`).join('')}</div>`).join('')}</div><div class="up-next-actions"><button class="send-up-next" data-send-up-next="${item.id}" type="button" ${!openCourt||item.teamA.length!==2||item.teamB.length!==2?'disabled':''}>${openCourt?`Send to Court ${openCourt.court}`:'No open court'}</button></div></article>`).join('')}</div>`:'<p class="hint">Optional — prepare the next matches before a court opens.</p>'}</section>`;
+        $('#up-next').innerHTML=`<section class="up-next"><div class="up-next-head"><h3>Matchmaking · Up next ${upNext.length}</h3><button class="up-next-add" id="add-up-next" type="button" ${s.mode==='team'?!canAddTeamMatch?'disabled':'':readyCount<4?'disabled':''}${teamMatchHint}>＋ Add match</button></div>${upNext.length?`<div class="up-next-grid">${upNext.map((item,index)=>`<article class="up-next-card"><div class="up-next-card-head"><span>Up Next ${index+1} · Auto</span><span>${item.teamA.length+item.teamB.length}/4</span></div><div class="up-next-teams">${[['TEAM 1',item.teamA],['TEAM 2',item.teamB]].map(([label,team])=>{const repeats=s.mode==='team'&&team.length===2?completedTeammatePairCount(team[0],team[1],s):0;return `<div class="up-next-team"><label>${label}</label>${team.map(p=>`<div class="up-next-player"><span>${escapeHtml(p.name)}</span><button data-up-next-edit="${item.id}" data-up-next-player="${p.id}" type="button" title="Replace player">✎</button><button data-up-next-remove="${item.id}" data-up-next-player="${p.id}" type="button" title="Remove player">×</button></div>`).join('')}${repeats?`<p class="pair-warning">⚠ Paired together ${repeats} time${repeats===1?'':'s'} before. Use ✎ to replace a player.</p>`:''}</div>`;}).join('')}</div><div class="up-next-actions"><button class="send-up-next" data-send-up-next="${item.id}" type="button" ${!openCourt||item.teamA.length!==2||item.teamB.length!==2?'disabled':''}>${openCourt?`Send to Court ${openCourt.court}`:'No open court'}</button></div></article>`).join('')}</div>`:'<p class="hint">Optional — prepare the next matches before a court opens.</p>'}</section>`;
         if(s.mode==='team')$('.up-next-head',$('#up-next'))?.insertAdjacentHTML('beforeend','<button class="up-next-add" id="add-manual-team-match" type="button">Manual matchup</button>');
         if(s.mode==='team')$$('.up-next-card').forEach((card,index)=>{const item=upNext[index],labels=$$('label',card),panels=$$('.up-next-team',card),indices=[item.teamAIndex,item.teamBIndex];indices.forEach((teamIndex,side)=>{const color=s.teamColors?.[teamIndex]||teamPalette[teamIndex]?.[1]||'#1673d1',name=teamIndex===undefined?`Team ${side===0?'A':'B'}`:(s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`),logoUrl=teamLogoUrl(teamLogo(teamIndex,s));labels[side].textContent=name;labels[side].style.color=color;panels[side].style.backgroundColor=`${color}20`;panels[side].style.borderTop=`3px solid ${color}`;if(logoUrl)panels[side].insertAdjacentHTML('afterbegin',`<img class="up-next-team-logo" src="${escapeHtml(logoUrl)}" alt="">`);});card.style.borderColor=s.teamColors?.[item.teamAIndex]||teamPalette[item.teamAIndex]?.[1]||'#a7edc3';});
         if(s.mode==='team')$$('.up-next-card-head',$('#up-next')).forEach((head,index)=>{if(upNext[index].manual)head.querySelector('span').textContent=`Up Next ${index+1} · Manual`;});
@@ -1186,9 +1241,10 @@
         $$('[data-waiting-player]').forEach(b=>b.onclick=()=>showPlayerActions(b.dataset.waitingPlayer));
         const stageAll=$('#stage-all');if(stageAll)stageAll.onclick=()=>{s.matches.filter(m=>!m.teamA?.length&&!m.manualSlots).forEach(m=>{if(s.waiting.filter(p=>(p.status||'ready')==='ready').length>=4){if(s.mode==='team')stageTeamCourtWithHistory(m);else stageCourt(m);}});};
         const history=[...(s.completedMatches||[])].reverse();
-        $('#match-history').innerHTML=history.length?`<section class="match-history"><div class="match-history-toolbar"><h3 class="match-history-title">Match history · ${history.length}</h3><input class="field match-history-search" id="match-history-search" type="search" placeholder="Search player, team, round, score" aria-label="Search match history"></div><div class="match-history-card">${history.map(item=>{const aWinner=item.winner==='a',bWinner=item.winner==='b',noWinner=!item.winner,noScore=Number(item.scoreA)===0&&Number(item.scoreB)===0;const scores=noWinner?'<span class="no-winner-label">No winner</span>':noScore?`<span class="${aWinner?'winner-mark':'loser-mark'}">${aWinner?'W':'—'}</span><span class="${bWinner?'winner-mark':'loser-mark'}">${bWinner?'W':'—'}</span>`:`<span class="${aWinner?'winning-score':''}">${item.scoreA}</span><span class="${bWinner?'winning-score':''}">${item.scoreB}</span>`;return `<div class="history-match ${noWinner?'no-winner-row':''}"><span class="history-round">R${item.round||1}</span><div class="history-teams"><span class="${aWinner?'winner':''}">${escapeHtml(item.teamA.join(' & '))}</span><span class="${bWinner?'winner':''}">${escapeHtml(item.teamB.join(' & '))}</span></div><div class="history-score">${scores}<span class="history-duration" title="Match duration">${matchDuration(item.startedAt,item.completedAt)}</span></div></div>`}).join('')}<p class="match-history-empty" id="match-history-empty" hidden>No matches found.</p></div></section>`:'';
+        $('#match-history').innerHTML=history.length?`<section class="match-history"><div class="match-history-toolbar"><h3 class="match-history-title">Match history · ${history.length}</h3><input class="field match-history-search" id="match-history-search" type="search" placeholder="Search player, team, round, score" aria-label="Search match history"></div><div class="match-history-card">${history.map((item,index)=>{const aWinner=item.winner==='a',bWinner=item.winner==='b',noWinner=!item.winner,noScore=Number(item.scoreA)===0&&Number(item.scoreB)===0,matchIndex=s.completedMatches.length-1-index;const scores=noWinner?'<span class="no-winner-label">No winner</span>':noScore?`<span class="${aWinner?'winner-mark':'loser-mark'}">${aWinner?'W':'—'}</span><span class="${bWinner?'winner-mark':'loser-mark'}">${bWinner?'W':'—'}</span>`:`<span class="${aWinner?'winning-score':''}">${item.scoreA}</span><span class="${bWinner?'winning-score':''}">${item.scoreB}</span>`;return `<div class="history-match ${noWinner?'no-winner-row':''}"><span class="history-round">R${item.round||1}</span><div class="history-teams"><span class="${aWinner?'winner':''}">${escapeHtml(item.teamA.join(' & '))}</span><span class="${bWinner?'winner':''}">${escapeHtml(item.teamB.join(' & '))}</span></div><div class="history-score">${scores}<span class="history-duration" title="Match duration">${matchDuration(item.startedAt,item.completedAt)}</span><button class="history-edit" data-edit-history="${matchIndex}" type="button">Edit result</button></div></div>`}).join('')}<p class="match-history-empty" id="match-history-empty" hidden>No matches found.</p></div></section>`:'';
         if(s.mode==='team')$$('.history-match').forEach((row,index)=>{const item=history[index];if(!item)return;const teams=$$('.history-teams span',row),indices=[item.teamAIndex,item.teamBIndex],colors=indices.map(teamIndex=>teamPalette[teamIndex]?.[1]||'#1673d1');row.style.background=`linear-gradient(90deg,${colors[0]}24,${colors[1]}24)`;row.style.borderLeftColor=colors[0];indices.forEach((teamIndex,side)=>{if(teamIndex===undefined)return;const name=s.teamNames?.[teamIndex]||teamPalette[teamIndex]?.[0]||`Team ${teamIndex+1}`;teams[side].insertAdjacentHTML('afterbegin',`<small style="color:${colors[side]}">${escapeHtml(name)} · </small>`);});});
         const historySearch=$('#match-history-search'),historyEmpty=$('#match-history-empty');if(historySearch)historySearch.oninput=()=>{const query=historySearch.value.trim().toLocaleLowerCase(),rows=$$('.history-match',$('#match-history')),visible=rows.filter(row=>row.textContent.toLocaleLowerCase().includes(query));rows.forEach(row=>row.hidden=!row.textContent.toLocaleLowerCase().includes(query));if(historyEmpty)historyEmpty.hidden=visible.length>0;};
+        $$('[data-edit-history]').forEach(button=>button.onclick=()=>editRecordedMatchWinner(Number(button.dataset.editHistory)));
         const addCourtButton=$('#add-court');addCourtButton.disabled=s.matches.length>=8;addCourtButton.textContent=s.matches.length>=8?'Maximum 8 courts':'＋ Add court';
     }
     $('#add-court').onclick=addCourt;
@@ -1218,10 +1274,64 @@
     const endDialog=$('#end-dialog'),endDialogPanel=$('#end-dialog-panel');
     function hideEndDialog(){endDialog.hidden=true;endDialog.classList.remove('selector');}
     function confirmEndSession(){if(!state.current)return;const teamSession=state.current.mode==='team',incomplete=teamSession?state.current.players.filter(player=>(player.gamesPlayed||0)<state.current.gamesPerPlayer):[];if(incomplete.length){toast(`${incomplete.length} player${incomplete.length===1?' needs':'s need'} more games before the session can end`);return;}endDialog.classList.remove('selector');endDialogPanel.innerHTML=`<div class="end-dialog-copy"><h3 id="end-dialog-title">End session?</h3><p>${teamSession?`Every player has completed ${state.current.gamesPerPlayer} games.`:'No more matches can be generated after ending.'} You’ll see the complete session summary next.</p></div><div class="confirm-actions"><button id="cancel-end-session">Cancel</button><button id="confirm-end-session" style="color:#ff6b66">End session</button></div>`;endDialog.hidden=false;$('#cancel-end-session').onclick=hideEndDialog;$('#confirm-end-session').onclick=finishSession;}
-    function finishSession(){const session=structuredClone(state.current);session.id=session.id||newId();session.endedAt=new Date().toISOString();state.summary=session;if(state.keepHistory){state.history.unshift(session);archiveSession(session);}state.current=null;state.players=[];state.setup={...initial.setup};$('#session-name').value='';renderSetup();renderPlayers();hideEndDialog();save();show('session-summary');}
+    let endingSession=false;
+    async function finishSession(){
+        if(!state.current||endingSession)return;
+        const session=structuredClone(state.current);
+        session.id=session.id||newId();
+        session.endedAt=new Date().toISOString();
+        endingSession=true;
+        const confirmButton=$('#confirm-end-session');
+        if(confirmButton){confirmButton.disabled=true;confirmButton.textContent='Saving…';}
+        try{
+            if(state.keepHistory)await archiveSession(session);
+            state.summary=session;
+            if(state.keepHistory)state.history.unshift(session);
+            state.current=null;
+            state.players=[];
+            state.setup={...initial.setup};
+            $('#session-name').value='';
+            renderSetup();
+            renderPlayers();
+            hideEndDialog();
+            save();
+            show('session-summary');
+        }catch(error){
+            // Keep both the active session and an on-device copy so it can be retried safely.
+            persistOffline(persistedSnapshot());
+            toast('Session was not saved. It is still open—check the connection and tap End Session again.');
+            if(confirmButton){confirmButton.disabled=false;confirmButton.textContent='End session';}
+        }finally{endingSession=false;}
+    }
     $('#end-session').onclick=confirmEndSession;
     $('#summary-done').onclick=()=>show('home');
-    function closeOpenMatch(record,winner=null){const s=state.current,m=currentOpenMatch();if(!s||!m)return;const completedAt=new Date().toISOString();if(record){s.played=(s.played||0)+1;const winningTeam=winner==='a'?m.teamA:winner==='b'?m.teamB:[],losingTeam=winner==='a'?m.teamB:winner==='b'?m.teamA:[],bump=(player,field)=>{const canonical=s.players.find(p=>p.id===player.id);[...new Set([player,canonical].filter(Boolean))].forEach(p=>p[field]=(p[field]||0)+1);};[...m.teamA,...m.teamB].forEach(p=>bump(p,'gamesPlayed'));winningTeam.forEach(p=>bump(p,'wins'));losingTeam.forEach(p=>bump(p,'losses'));s.completedMatches=s.completedMatches||[];s.completedMatches.push({court:m.court,round:s.round,teamA:m.teamA.map(p=>p.name),teamB:m.teamB.map(p=>p.name),teamAIndex:m.teamAIndex,teamBIndex:m.teamBIndex,scoreA:m.scoreA||0,scoreB:m.scoreB||0,winner,startedAt:m.startedAt,completedAt});}const queuedAt=completedAt;[...m.teamA,...m.teamB].forEach(p=>p.queuedAt=queuedAt);s.waiting.push(...m.teamA,...m.teamB);m.teamA=[];m.teamB=[];m.started=false;m.startedAt=null;m.completedAt=null;m.scoreA=0;m.scoreB=0;m.done=false;openMatchId=null;hideEndDialog();save();show('active');}
+    function closeOpenMatch(record,winner=null){const s=state.current,m=currentOpenMatch();if(!s||!m)return;const completedAt=new Date().toISOString(),matchPlayers=[...m.teamA,...m.teamB];if(record){s.played=(s.played||0)+1;const winningTeam=winner==='a'?m.teamA:winner==='b'?m.teamB:[],losingTeam=winner==='a'?m.teamB:winner==='b'?m.teamA:[],bump=(player,field)=>{const canonical=s.players.find(p=>p.id===player.id);[...new Set([player,canonical].filter(Boolean))].forEach(p=>p[field]=(p[field]||0)+1);};matchPlayers.forEach(p=>bump(p,'gamesPlayed'));winningTeam.forEach(p=>bump(p,'wins'));losingTeam.forEach(p=>bump(p,'losses'));s.completedMatches=s.completedMatches||[];s.completedMatches.push({court:m.court,round:s.round,teamA:m.teamA.map(p=>p.name),teamB:m.teamB.map(p=>p.name),teamAIndex:m.teamAIndex,teamBIndex:m.teamBIndex,scoreA:m.scoreA||0,scoreB:m.scoreB||0,winner,startedAt:m.startedAt,completedAt});}
+        // A completed game starts a fresh wait. Keep the roster and court records in sync
+        // so both the display and automatic queue use the same timestamp.
+        if(record)matchPlayers.forEach(player=>{const canonical=s.players.find(item=>item.id===player.id);[...new Set([player,canonical].filter(Boolean))].forEach(copy=>copy.queuedAt=completedAt);});
+        s.waiting.push(...matchPlayers);m.teamA=[];m.teamB=[];m.started=false;m.startedAt=null;m.completedAt=null;m.scoreA=0;m.scoreB=0;m.done=false;openMatchId=null;hideEndDialog();save();show('active');}
+    function editRecordedMatchWinner(matchIndex){
+        const s=state.current,item=s?.completedMatches?.[matchIndex];
+        if(!item)return;
+        const setWinner=winner=>{
+            if(item.winner===winner){hideEndDialog();return;}
+            const adjust=(names,field,amount)=>names.forEach(name=>{const player=s.players.find(candidate=>candidate.name===name);if(player)player[field]=Math.max(0,(player[field]||0)+amount);});
+            if(item.winner==='a'){adjust(item.teamA,'wins',-1);adjust(item.teamB,'losses',-1);}
+            if(item.winner==='b'){adjust(item.teamB,'wins',-1);adjust(item.teamA,'losses',-1);}
+            if(winner==='a'){adjust(item.teamA,'wins',1);adjust(item.teamB,'losses',1);}
+            if(winner==='b'){adjust(item.teamB,'wins',1);adjust(item.teamA,'losses',1);}
+            item.winner=winner;
+            hideEndDialog();
+            save();
+            renderActive();
+            toast('Match result updated');
+        };
+        endDialog.classList.add('selector');
+        endDialogPanel.innerHTML=`<div class="end-dialog-copy"><h3 id="end-dialog-title">Edit match result</h3><p>Choose the correct winner for this completed match.</p></div><div class="winner-options"><button data-correct-winner="a">${escapeHtml(item.teamA.join(' & '))} won</button><button data-correct-winner="b">${escapeHtml(item.teamB.join(' & '))} won</button><button class="no-winner" data-correct-winner="">No winner</button></div><div class="winner-cancel-wrap"><button class="winner-cancel" id="winner-cancel">Cancel</button></div>`;
+        endDialog.hidden=false;
+        $$('[data-correct-winner]',endDialogPanel).forEach(button=>button.onclick=()=>setWinner(button.dataset.correctWinner||null));
+        $('#winner-cancel').onclick=hideEndDialog;
+    }
     function requestEndMatch(){const m=currentOpenMatch();if(!m)return;const scoreA=m.scoreA||0,scoreB=m.scoreB||0;if(scoreA!==scoreB){const winner=scoreA>scoreB?'a':'b',team=winner==='a'?m.teamA:m.teamB;endDialog.classList.remove('selector');endDialogPanel.innerHTML=`<div class="end-dialog-copy"><h3 id="end-dialog-title">End match?</h3><p>Final score: ${scoreA} – ${scoreB} · ${escapeHtml(team.map(p=>p.name).join(' & '))} wins</p></div><div class="confirm-actions"><button id="end-dialog-cancel">Cancel</button><button id="end-dialog-confirm">End match</button></div>`;endDialog.hidden=false;$('#end-dialog-cancel').onclick=hideEndDialog;$('#end-dialog-confirm').onclick=()=>closeOpenMatch(true,winner);return;}endDialog.classList.add('selector');endDialogPanel.innerHTML=`<div class="end-dialog-copy"><h3 id="end-dialog-title">How did this match end?</h3><p>${scoreA===0?'No score was entered.':'The scores are tied.'} Pick a winner or skip.</p></div><div class="winner-options"><button data-winner="a">${escapeHtml(m.teamA.map(p=>p.name).join(' & '))} won</button><button data-winner="b">${escapeHtml(m.teamB.map(p=>p.name).join(' & '))} won</button><button class="no-winner" id="no-winner">End without a winner</button></div><div class="winner-cancel-wrap"><button class="winner-cancel" id="winner-cancel">Cancel</button></div>`;endDialog.hidden=false;$$('[data-winner]',endDialogPanel).forEach(b=>b.onclick=()=>closeOpenMatch(true,b.dataset.winner));$('#no-winner').onclick=()=>closeOpenMatch(true,null);$('#winner-cancel').onclick=hideEndDialog;}
     $('#end-unrecorded').onclick=()=>closeOpenMatch(false);$('#end-recorded').onclick=requestEndMatch;
     endDialog.onclick=e=>{if(e.target===endDialog)hideEndDialog();};
